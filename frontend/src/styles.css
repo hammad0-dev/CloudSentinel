@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-[#0a0e1a] text-[#e2e8f0] font-sans;
+}
+
+.card {
+  @apply bg-[#0f1629] border border-[#1e2d4a] rounded-xl animate-fadeSlideIn;
+}
+
+.primary-btn {
+  @apply bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold transition-all duration-300 ease-in-out;
+}
+
+.input {
+  @apply bg-[#0a0e1a] border border-[#1e2d4a] text-[#e2e8f0] rounded-lg px-4 py-2 focus:border-blue-500 focus:outline-none;
+}
+
+.input-with-icon-left {
+  padding-left: 2.5rem !important;
+}
+
+.input-with-icon-both {
+  padding-left: 2.5rem !important;
+  padding-right: 2.5rem !important;
+}
+
+.hover-lift {
+  @apply transition-all duration-300 ease-in-out hover:-translate-y-0.5 hover:shadow-[0_0_24px_rgba(59,130,246,0.25)];
+}
+
+.progress-anim {
+  animation: progressGrow 1s ease-in-out forwards;
+}
+
+@keyframes progressGrow {
+  from {
+    width: 0;
+  }
+}
