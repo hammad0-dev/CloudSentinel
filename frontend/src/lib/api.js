@@ -1,6 +1,7 @@
 import axios from "axios";
 
-const BASE_URL = "http://192.168.141.128:3000/api";
+// Set in frontend/.env: VITE_API_BASE_URL=http://localhost:3000/api (Windows backend) or http://UBUNTU_IP:3000/api
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api").replace(/\/?$/, "");
 
 const api = axios.create({
   baseURL: BASE_URL,

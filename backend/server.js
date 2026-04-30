@@ -1,6 +1,9 @@
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
-require("dotenv").config();
+require("dotenv").config({
+  path: process.env.BACKEND_ENV_FILE || path.join(__dirname, ".env"),
+});
 const pool = require("./db");
 
 const app = express();
@@ -11,7 +14,7 @@ const allowedOrigins = new Set([
   "http://localhost:5174",
   "http://127.0.0.1:5174",
   "http://192.168.141.128:5173",
-  "http://192.168.37.122:5173",
+  "http://YOUR_WINDOWS_IP:5173",
 ]);
 
 app.use(

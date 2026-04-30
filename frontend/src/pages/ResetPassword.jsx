@@ -28,12 +28,12 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="min-h-screen grid place-items-center bg-[#0a0e1a] px-4">
+    <div className="min-h-screen grid place-items-center bg-[var(--bg-primary)] px-4">
       <div className="card w-full max-w-md p-8">
         <h1 className="text-2xl font-bold mb-2">Set New Password</h1>
         {!done ? (
           <>
-            <p className="text-[#64748b] mb-4">Enter your new password.</p>
+            <p className="text-[var(--text-secondary)] mb-4">Enter your new password.</p>
             <input className="input w-full mb-3" type="password" placeholder="New password" value={password} onChange={(e) => setPassword(e.target.value)} />
             <input className="input w-full mb-4" type="password" placeholder="Confirm password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
             <button className="primary-btn w-full" onClick={submit} disabled={loading}>
@@ -42,8 +42,8 @@ export default function ResetPassword() {
           </>
         ) : (
           <div className="space-y-3">
-            <p className="text-emerald-400">Password reset successful.</p>
-            <Link to="/login" className="text-blue-400">Go to Login</Link>
+            <p className="text-[var(--accent-green)]">Password reset successful.</p>
+            <Link to="/login" className="text-[var(--accent-green)]">Go to Login</Link>
           </div>
         )}
       </div>

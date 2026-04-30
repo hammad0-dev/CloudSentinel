@@ -199,21 +199,6 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
-router.post("/:id/scan", auth, async (req, res) => {
-  try {
-    const exists = await pool.query("SELECT id FROM projects WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]);
-    if (!exists.rows.length) return res.status(404).json({ error: "Project not found" });
-
-    await pool.query(
-      "INSERT INTO scan_history (project_id, scan_type, status, started_at, completed_at) VALUES ($1, $2, $3, NOW(), NOW())",
-      [req.params.id, "SAST", "completed"]
-    );
-    return res.json({ success: true, status: "completed" });
-  } catch (error) {
-    return res.status(500).json({ error: "Failed to trigger scan" });
-  }
-});
-
 router.get("/", auth, async (req, res) => {
   try {
     const result = await pool.query(

@@ -24,13 +24,13 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen grid place-items-center bg-[#0a0e1a] px-4">
+    <div className="min-h-screen grid place-items-center bg-[var(--bg-primary)] px-4">
       <div className="card w-full max-w-md p-8 text-center">
         {!sent ? (
           <>
-            <Lock className="mx-auto text-blue-500 mb-3" />
+            <Lock className="mx-auto text-[var(--accent-green)] mb-3" />
             <h1 className="text-2xl font-bold mb-2">Reset Your Password</h1>
-            <p className="text-[#64748b] mb-4">Enter your email and we will send reset instructions</p>
+            <p className="text-[var(--text-secondary)] mb-4">Enter your email and we will send reset instructions</p>
             <input className="input w-full mb-3" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" />
             <button className="primary-btn w-full" onClick={submit} disabled={loading}>
               {loading ? "Sending..." : "Send Reset Link"}
@@ -38,10 +38,10 @@ export default function ForgotPassword() {
           </>
         ) : (
           <>
-            <CheckCircle2 className="mx-auto text-emerald-500 mb-3" />
+            <CheckCircle2 className="mx-auto text-[var(--accent-green)] mb-3" />
             <h2 className="text-xl font-bold">Check your inbox!</h2>
-            <p className="text-[#64748b] my-3">We sent password reset instructions to {email}</p>
-            <Link to="/login" className="text-blue-400">Back to Login</Link>
+            <p className="text-[var(--text-secondary)] my-3">We sent password reset instructions to {email}</p>
+            <Link to="/login" className="text-[var(--accent-green)]">Back to Login</Link>
           </>
         )}
       </div>

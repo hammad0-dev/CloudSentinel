@@ -35,6 +35,7 @@ export default function App() {
     <Router>
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/landing" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="/monitoring" element={<ProtectedRoute><MonitoringAlerts /></ProtectedRoute>} />
         <Route path="/secrets" element={<ProtectedRoute><SecretsManagement /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><ProfileSettings /></ProtectedRoute>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
   );

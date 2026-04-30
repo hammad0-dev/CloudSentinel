@@ -8,27 +8,50 @@ import { readLocalProjects, removeLocalProject, upsertLocalProject, writeLocalPr
 
 const emptyForm = { projectName: "", repositoryUrl: "", githubToken: "", description: "" };
 const statusStyles = {
-  Active: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-  Scanning: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  Pending: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
-  Archived: "bg-slate-500/20 text-slate-300 border-slate-500/30",
+  Active: "border-[var(--accent-green)] text-[var(--accent-green)]",
+  Scanning: "border-[var(--accent-purple)] text-[var(--accent-purple)]",
+  Failed: "border-[var(--accent-red)] text-[var(--accent-red)]",
+  Pending: "border-[var(--accent-yellow)] text-[var(--accent-yellow)]",
+  Archived: "border-[var(--text-tertiary)] text-[var(--text-tertiary)]",
 };
 
-const normalize = (project) => ({
-  id: project.id || Date.now(),
-  projectName: project.projectName || project.name || "Untitled project",
-  repositoryUrl: project.repositoryUrl || project.repo_url || "",
-  stack: project.stack || project.language || "Auto-detected after analysis",
-  status: project.status || "Pending",
-  securityScore: typeof project.securityScore === "number" ? project.securityScore : typeof project.security_score === "number" ? project.security_score : null,
-  lastScanTime: project.lastScanTime || project.last_scan_time || project.created_at || null,
-});
+const normalize = (project) => {
+  const latestScan = project.latestScan;
+  const ls = String(latestScan?.status ?? "").toUpperCase();
+  let status = project.status || "Pending";
+  if (ls === "RUNNING") status = "Scanning";
+  else if (ls === "FAILED") status = "Failed";
+  else if (ls === "COMPLETED") status = "Active";
+
+  const securityScore =
+    typeof project.securityScore === "number"
+      ? project.securityScore
+      : typeof project.security_score === "number"
+        ? project.security_score
+        : null;
+  const lastScanTime =
+    project.lastScanTime ||
+    project.last_scan_time ||
+    latestScan?.completed_at ||
+    project.created_at ||
+    null;
+
+  return {
+    id: project.id || Date.now(),
+    projectName: project.projectName || project.name || "Untitled project",
+    repositoryUrl: project.repositoryUrl || project.repo_url || "",
+    stack: project.stack || project.language || "Auto-detected after analysis",
+    status,
+    securityScore,
+    lastScanTime,
+  };
+};
 
 const scoreClass = (score) => {
-  if (typeof score !== "number") return "bg-slate-500/20 text-slate-300 border-slate-500/30";
-  if (score >= 90) return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
-  if (score >= 70) return "bg-yellow-500/20 text-yellow-300 border-yellow-500/30";
-  return "bg-red-500/20 text-red-400 border-red-500/30";
+  if (typeof score !== "number") return "border-[var(--text-tertiary)] text-[var(--text-tertiary)]";
+  if (score >= 90) return "border-[var(--accent-green)] text-[var(--accent-green)]";
+  if (score >= 70) return "border-[var(--accent-yellow)] text-[var(--accent-yellow)]";
+  return "border-[var(--accent-red)] text-[var(--accent-red)]";
 };
 
 export default function ProjectsPage() {
@@ -109,16 +132,20 @@ export default function ProjectsPage() {
   const scanProject = async (project) => {
     setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, status: "Scanning" } : p)));
     try {
-      await api.post(`/projects/${project.id}/scan`);
-      const updated = { ...project, status: "Active", securityScore: Math.floor(Math.random() * 31) + 70, lastScanTime: new Date().toISOString() };
-      setProjects((prev) => prev.map((p) => (p.id === project.id ? updated : p)));
-      upsertLocalProject(updated);
-      toast.success("Scan triggered");
-    } catch {
-      const fallback = { ...project, status: "Active", lastScanTime: new Date().toISOString() };
-      setProjects((prev) => prev.map((p) => (p.id === project.id ? fallback : p)));
-      upsertLocalProject(fallback);
-      toast.error("Scan API unavailable. Updated local project state.");
+      await api.post(`/sast/scan/${project.id}`);
+      const { data } = await api.get("/projects");
+      const list = (data.projects || []).map(normalize);
+      setProjects(list);
+      writeLocalProjects(list);
+      toast.success("SAST scan completed");
+    } catch (error) {
+      toast.error(error.response?.data?.error || "SAST scan failed");
+      try {
+        const { data } = await api.get("/projects");
+        setProjects((data.projects || []).map(normalize));
+      } catch {
+        /* noop */
+      }
     }
   };
 
@@ -126,11 +153,11 @@ export default function ProjectsPage() {
     <div className="space-y-6">
       <PageHeader title="My Projects" subtitle={`${projects.length} registered`} actions={<button className="primary-btn" onClick={() => setShowModal(true)}><Plus size={16} className="inline mr-1" />Add Project</button>} />
 
-      {loading ? <div className="rounded-xl border border-[#1e2d4a] bg-[#0f1629] p-6 text-[#94a3b8]">Loading projects...</div> : projects.length === 0 ? (
-        <div className="rounded-xl border border-[#1e2d4a] bg-[#0f1629] p-10 text-center">
-          <FolderOpen className="mx-auto text-blue-400 mb-3" size={34} />
+      {loading ? <div className="card p-6 text-[var(--text-secondary)]">Loading projects...</div> : projects.length === 0 ? (
+        <div className="card p-10 text-center">
+          <FolderOpen className="mx-auto text-[var(--accent-green)] mb-3" size={34} />
           <h3 className="text-lg font-semibold mb-2">No projects yet</h3>
-          <p className="text-[#94a3b8] mb-5">No projects yet. Connect your first repository.</p>
+          <p className="text-[var(--text-secondary)] mb-5">No projects yet. Connect your first repository.</p>
           <button className="primary-btn" onClick={() => setShowModal(true)}><Plus size={16} className="inline mr-1" />Add Project</button>
         </div>
       ) : (
@@ -138,17 +165,17 @@ export default function ProjectsPage() {
           {projects.map((raw) => {
             const project = normalize(raw);
             return (
-              <div key={project.id} className="rounded-xl border border-[#1e2d4a] bg-[#0f1629] p-5">
+              <div key={project.id} className="card p-5">
                 <div className="grid md:grid-cols-7 gap-4 items-center">
-                  <div className="md:col-span-2"><p className="font-semibold">{project.projectName}</p><a href={project.repositoryUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-400 inline-flex items-center gap-1 hover:underline break-all"><Github size={14} />{project.repositoryUrl}<ExternalLink size={12} /></a></div>
-                  <div className="text-sm text-[#cbd5e1]">{project.stack}</div>
-                  <div><span className={`px-2 py-1 text-xs rounded-full border ${statusStyles[project.status] || statusStyles.Pending}`}>{project.status}</span></div>
-                  <div className="text-sm text-[#94a3b8]">{project.lastScanTime ? new Date(project.lastScanTime).toLocaleString() : "Not scanned yet"}</div>
-                  <div><span className={`px-2 py-1 text-xs rounded-full border ${scoreClass(project.securityScore)}`}>{typeof project.securityScore === "number" ? `${project.securityScore}/100` : "N/A"}</span></div>
+                  <div className="md:col-span-2"><p className="font-semibold">{project.projectName}</p><a href={project.repositoryUrl} target="_blank" rel="noreferrer" className="text-sm text-[var(--accent-green)] inline-flex items-center gap-1 hover:underline break-all"><Github size={14} />{project.repositoryUrl}<ExternalLink size={12} /></a></div>
+                  <div className="text-sm text-[var(--text-secondary)]">{project.stack}</div>
+                  <div><span className={`pill-badge ${statusStyles[project.status] || statusStyles.Pending}`}>{project.status}</span></div>
+                  <div className="text-sm text-[var(--text-secondary)]">{project.lastScanTime ? new Date(project.lastScanTime).toLocaleString() : "Not scanned yet"}</div>
+                  <div><span className={`pill-badge ${scoreClass(project.securityScore)}`}>{typeof project.securityScore === "number" ? `${project.securityScore}/100` : "N/A"}</span></div>
                   <div className="flex flex-wrap gap-2">
-                    <button className="px-3 py-2 rounded-lg border border-[#1e2d4a] hover:bg-[#111827] text-sm" onClick={() => scanProject(project)}><ScanSearch size={14} className="inline mr-1" />Scan</button>
-                    <Link className="px-3 py-2 rounded-lg border border-[#1e2d4a] hover:bg-[#111827] text-sm" to={`/projects/${project.id}`}>View</Link>
-                    <button className="px-3 py-2 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-500/10 text-sm" onClick={() => deleteProject(project.id)}><Trash2 size={14} className="inline mr-1" />Delete</button>
+                    <button className="primary-btn text-sm" onClick={() => scanProject(project)}><ScanSearch size={14} className="inline mr-1" />Scan</button>
+                    <Link className="secondary-btn text-sm" to={`/projects/${project.id}`}>View</Link>
+                    <button className="danger-btn text-sm" onClick={() => deleteProject(project.id)}><Trash2 size={14} className="inline mr-1" />Delete</button>
                   </div>
                 </div>
               </div>
@@ -158,17 +185,17 @@ export default function ProjectsPage() {
       )}
 
       {showModal ? (
-        <div className="fixed inset-0 z-50 bg-black/60 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/70 overflow-y-auto">
           <div className="min-h-full w-full flex items-start justify-center p-4 pt-16">
-            <form onSubmit={registerProject} className="w-full max-w-xl rounded-xl border border-[#1e2d4a] bg-[#0f1629] p-6 space-y-4">
+            <form onSubmit={registerProject} className="w-full max-w-xl rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-6 space-y-4">
             <h3 className="text-xl font-semibold">Register Project</h3>
-            <div><label className="text-sm text-[#94a3b8]">Project Name</label><input className={`input w-full mt-1 ${errors.projectName ? "border-red-500" : ""}`} value={form.projectName} onChange={(e) => setForm((prev) => ({ ...prev, projectName: e.target.value }))} />{errors.projectName ? <p className="text-xs text-red-400 mt-1">{errors.projectName}</p> : null}</div>
-            <div><label className="text-sm text-[#94a3b8]">GitHub Repository URL</label><input className={`input w-full mt-1 ${errors.repositoryUrl ? "border-red-500" : ""}`} placeholder="https://github.com/owner/repository" value={form.repositoryUrl} onChange={(e) => setForm((prev) => ({ ...prev, repositoryUrl: e.target.value }))} />{errors.repositoryUrl ? <p className="text-xs text-red-400 mt-1">{errors.repositoryUrl}</p> : null}</div>
-            <div className="rounded-lg border border-[#1e2d4a] bg-[#0a0e1a] p-3 text-sm text-[#94a3b8]">
+            <div><label className="text-sm text-[var(--text-secondary)]">Project Name</label><input className={`input w-full mt-1 ${errors.projectName ? "border-[var(--accent-red)]" : ""}`} value={form.projectName} onChange={(e) => setForm((prev) => ({ ...prev, projectName: e.target.value }))} />{errors.projectName ? <p className="text-xs text-[var(--accent-red)] mt-1">{errors.projectName}</p> : null}</div>
+            <div><label className="text-sm text-[var(--text-secondary)]">GitHub Repository URL</label><input className={`input w-full mt-1 ${errors.repositoryUrl ? "border-[var(--accent-red)]" : ""}`} placeholder="https://github.com/owner/repository" value={form.repositoryUrl} onChange={(e) => setForm((prev) => ({ ...prev, repositoryUrl: e.target.value }))} />{errors.repositoryUrl ? <p className="text-xs text-[var(--accent-red)] mt-1">{errors.repositoryUrl}</p> : null}</div>
+            <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] p-3 text-sm text-[var(--text-secondary)]">
               Stack / Language is auto-detected from your repository by CloudSentinel.
             </div>
             <div>
-              <label className="text-sm text-[#94a3b8]">GitHub Personal Access Token (optional)</label>
+              <label className="text-sm text-[var(--text-secondary)]">GitHub Personal Access Token (optional)</label>
               <input
                 type="password"
                 className="input w-full mt-1"
@@ -176,12 +203,12 @@ export default function ProjectsPage() {
                 value={form.githubToken}
                 onChange={(e) => setForm((prev) => ({ ...prev, githubToken: e.target.value }))}
               />
-              <p className="text-xs text-[#94a3b8] mt-1">
+              <p className="text-xs text-[var(--text-secondary)] mt-1">
                 Public repositories usually do not need a token. For private repositories, provide a PAT with repo access.
               </p>
             </div>
-            <div><label className="text-sm text-[#94a3b8]">Description (optional)</label><textarea className="input w-full mt-1 min-h-24" value={form.description} onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))} /></div>
-              <div className="flex justify-end gap-2"><button type="button" className="px-4 py-2 rounded-lg border border-[#1e2d4a]" onClick={() => setShowModal(false)}>Cancel</button><button type="submit" className="primary-btn min-w-40" disabled={saving}>{saving ? <><Loader2 size={14} className="inline mr-1 animate-spin" />Registering...</> : "Register Project"}</button></div>
+            <div><label className="text-sm text-[var(--text-secondary)]">Description (optional)</label><textarea className="input w-full mt-1 min-h-24" value={form.description} onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))} /></div>
+              <div className="flex justify-end gap-2"><button type="button" className="secondary-btn" onClick={() => setShowModal(false)}>Cancel</button><button type="submit" className="primary-btn min-w-40" disabled={saving}>{saving ? <><Loader2 size={14} className="inline mr-1 animate-spin" />Registering...</> : "Register Project"}</button></div>
             </form>
           </div>
         </div>

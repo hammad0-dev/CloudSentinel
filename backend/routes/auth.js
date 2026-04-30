@@ -127,22 +127,38 @@ router.post("/login", async (req, res) => {
 
 router.post("/google", async (req, res) => {
   try {
-    const { idToken } = req.body;
-    if (!idToken) return res.status(400).json({ error: "Google token is required" });
-    if (!process.env.GOOGLE_CLIENT_ID) {
-      return res.status(500).json({ error: "Google login is not configured on server" });
+    const { idToken, accessToken } = req.body;
+    if (!idToken && !accessToken) {
+      return res.status(400).json({ error: "Google token is required" });
     }
 
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    const payload = ticket.getPayload();
-    if (!payload?.email) return res.status(400).json({ error: "Google account email is missing" });
+    let email = null;
+    let fullName = null;
+    let avatarUrl = null;
 
-    const email = payload.email.toLowerCase();
-    const fullName = payload.name || email.split("@")[0];
-    const avatarUrl = payload.picture || null;
+    if (idToken) {
+      if (!process.env.GOOGLE_CLIENT_ID) {
+        return res.status(500).json({ error: "Google login is not configured on server" });
+      }
+      const ticket = await googleClient.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      const payload = ticket.getPayload();
+      if (!payload?.email) return res.status(400).json({ error: "Google account email is missing" });
+      email = payload.email.toLowerCase();
+      fullName = payload.name || email.split("@")[0];
+      avatarUrl = payload.picture || null;
+    } else {
+      const profileRes = await axios.get("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const payload = profileRes.data || {};
+      if (!payload?.email) return res.status(400).json({ error: "Google account email is missing" });
+      email = String(payload.email).toLowerCase();
+      fullName = payload.name || email.split("@")[0];
+      avatarUrl = payload.picture || null;
+    }
 
     let userRes = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
     if (!userRes.rows.length) {
@@ -157,7 +173,7 @@ router.post("/google", async (req, res) => {
     const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: "7d" });
     return res.json({ token, user: safeUser(user) });
   } catch (error) {
-    if (error?.message?.toLowerCase().includes("token")) {
+    if (error?.response?.status === 401 || error?.message?.toLowerCase().includes("token")) {
       return res.status(401).json({ error: "Invalid Google token" });
     }
     return res.status(500).json({ error: "Google login failed" });

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import toast from "react-hot-toast";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import PageHeader from "../components/PageHeader";
 import SeverityBadge from "../components/SeverityBadge";
 import api from "../utils/api";
@@ -15,7 +16,7 @@ export default function SASTResults() {
   const { id } = useParams();
   const [loading, setLoading] = useState(true);
   const [scanLoading, setScanLoading] = useState(false);
-  const [data, setData] = useState({ summary: {}, vulnerabilities: [] });
+  const [data, setData] = useState({ summary: {}, vulnerabilities: [], sonarMetrics: null });
   const [search, setSearch] = useState("");
   const [severityTab, setSeverityTab] = useState("ALL");
   const [expanded, setExpanded] = useState(null);
@@ -26,7 +27,11 @@ export default function SASTResults() {
       const res = await api.get(`/sast/${id}`);
       setData(res.data);
     } catch {
-      setData({ summary: { critical: 2, major: 3, minor: 2, info: 0, total: 7 }, vulnerabilities: fallback });
+      setData({
+        summary: { critical: 2, major: 3, minor: 2, info: 0, total: 7 },
+        vulnerabilities: fallback,
+        sonarMetrics: null,
+      });
     } finally {
       setLoading(false);
     }
@@ -54,9 +59,71 @@ export default function SASTResults() {
     });
   }, [data, search, severityTab]);
 
+  const issueChartData = useMemo(() => {
+    if (!data.sonarMetrics) return [];
+    return [
+      { name: "Bugs", value: data.sonarMetrics.bugs },
+      { name: "Vulns", value: data.sonarMetrics.vulnerabilities },
+      { name: "Hotspots", value: data.sonarMetrics.hotspots },
+      { name: "Smells", value: data.sonarMetrics.codeSmells },
+    ];
+  }, [data.sonarMetrics]);
+
+  const qualityChartData = useMemo(() => {
+    if (!data.sonarMetrics) return [];
+    return [
+      { name: "Coverage %", value: Number(data.sonarMetrics.coverage || 0) },
+      { name: "Duplication %", value: Number(data.sonarMetrics.duplications || 0) },
+    ];
+  }, [data.sonarMetrics]);
+
   return (
     <div className="space-y-6">
       <PageHeader title="SAST Scan Results" subtitle={`Last scanned: ${data.lastScan || "Not scanned"}`} actions={<button className="primary-btn" onClick={runScan} disabled={scanLoading}>{scanLoading ? "Scanning... Please wait" : "Run SAST Scan"}</button>} />
+      {data.sonarMetrics ? (
+        <div className="grid md:grid-cols-4 gap-4">
+          <div className="card p-4">Bugs: {data.sonarMetrics.bugs}</div>
+          <div className="card p-4">Vulnerabilities: {data.sonarMetrics.vulnerabilities}</div>
+          <div className="card p-4">Security Hotspots: {data.sonarMetrics.hotspots}</div>
+          <div className="card p-4">Code Smells: {data.sonarMetrics.codeSmells}</div>
+          <div className="card p-4">Coverage: {data.sonarMetrics.coverage.toFixed(1)}%</div>
+          <div className="card p-4">Duplications: {data.sonarMetrics.duplications.toFixed(1)}%</div>
+          <div className="card p-4">Lines of Code: {data.sonarMetrics.ncloc}</div>
+          <div className="card p-4">Quality Gate: {data.sonarMetrics.vulnerabilities === 0 && data.sonarMetrics.bugs === 0 ? "Passed" : "Needs review"}</div>
+        </div>
+      ) : null}
+      {data.sonarMetrics ? (
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="card p-4">
+            <p className="mb-3 text-sm text-[#94a3b8]">Issue Overview</p>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={issueChartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e2d4a" />
+                  <XAxis dataKey="name" stroke="#94a3b8" />
+                  <YAxis allowDecimals={false} stroke="#94a3b8" />
+                  <Tooltip />
+                  <Bar dataKey="value" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="card p-4">
+            <p className="mb-3 text-sm text-[#94a3b8]">Quality Metrics (%)</p>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={qualityChartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e2d4a" />
+                  <XAxis dataKey="name" stroke="#94a3b8" />
+                  <YAxis domain={[0, 100]} stroke="#94a3b8" />
+                  <Tooltip formatter={(v) => `${v}%`} />
+                  <Bar dataKey="value" fill="#22c55e" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="grid md:grid-cols-4 gap-4">
         <div className="card p-4 border border-red-600/40">Critical: {data.summary.critical || 0}</div>
         <div className="card p-4 border border-orange-500/40">Major: {data.summary.major || 0}</div>
