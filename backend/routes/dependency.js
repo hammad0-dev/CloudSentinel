@@ -17,6 +17,10 @@ function parseEnvMs(raw, fallback) {
 
 const DEP_GIT_TIMEOUT_MS = parseEnvMs(process.env.DEP_GIT_TIMEOUT_MS, 900_000);
 const DEP_TRIVY_TIMEOUT_MS = parseEnvMs(process.env.DEP_TRIVY_TIMEOUT_MS, 3_600_000);
+/** Gradle-only repos (no gradle.lockfile): Trivy fs rarely finds deps from bare build.gradle; compile emits jars/poms under build/ for scanning. Set DEP_SKIP_GRADLE_COMPILE=true to skip. */
+const DEP_GRADLE_COMPILE_TIMEOUT_MS = parseEnvMs(process.env.DEP_GRADLE_COMPILE_TIMEOUT_MS, 900_000);
+
+const SKIP_GRADLE_COMPILE = /^true$/i.test(String(process.env.DEP_SKIP_GRADLE_COMPILE ?? "").trim());
 
 const gitEnv = () => {
   const base = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
@@ -69,6 +73,94 @@ function spawnWithTimeout(label, command, args, spawnOptions, timeoutMs) {
   });
 }
 
+function gradleJvmEnv() {
+  const env = { ...process.env };
+  const jh =
+    process.env.DEP_GRADLE_JAVA_HOME?.trim() ||
+    process.env.SAST_GRADLE_JAVA_HOME?.trim();
+  if (jh) {
+    env.JAVA_HOME = jh;
+    env.PATH = `${path.join(jh, "bin")}${path.delimiter}${env.PATH || ""}`;
+  }
+  return env;
+}
+
+/**
+ * Gradle projects without pom.xml / *.gradle.lockfile: run compileJava so Trivy sees resolved artifacts under build/.
+ * Non-fatal on failure — Trivy still runs against sources (often still sparse for Gradle-only).
+ */
+async function bestEffortGradleCompileForTrivy(runDir) {
+  if (SKIP_GRADLE_COMPILE) return;
+
+  const hasPom = fs.existsSync(path.join(runDir, "pom.xml"));
+  const hasGradle =
+    fs.existsSync(path.join(runDir, "build.gradle")) ||
+    fs.existsSync(path.join(runDir, "build.gradle.kts"));
+  if (!hasGradle || hasPom) return;
+
+  const unixGradlew = path.join(runDir, "gradlew");
+  const bat = path.join(runDir, "gradlew.bat");
+  const hasUnix = fs.existsSync(unixGradlew);
+  const hasBat = fs.existsSync(bat);
+  if (!hasUnix && !hasBat) {
+    console.warn("[dep-scan] Gradle project without gradlew; skipping compile step.");
+    return;
+  }
+
+  if (process.platform !== "win32" && hasUnix) {
+    try {
+      fs.chmodSync(unixGradlew, 0o755);
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  const tasks = ["compileJava", "-x", "test"];
+  const gEnv = gradleJvmEnv();
+
+  try {
+    if (process.platform === "win32" && hasBat) {
+      await spawnWithTimeout(
+        "gradlew compileJava (deps)",
+        "gradlew.bat",
+        tasks,
+        { cwd: runDir, env: gEnv, stdio: ["ignore", "pipe", "pipe"], shell: true },
+        DEP_GRADLE_COMPILE_TIMEOUT_MS
+      );
+    } else if (process.platform === "win32" && hasUnix && !hasBat) {
+      await spawnWithTimeout(
+        "bash gradlew compileJava (deps)",
+        "bash",
+        [unixGradlew, ...tasks],
+        { cwd: runDir, env: gEnv, stdio: ["ignore", "pipe", "pipe"], shell: false },
+        DEP_GRADLE_COMPILE_TIMEOUT_MS
+      );
+    } else if (hasUnix) {
+      await spawnWithTimeout(
+        "gradlew compileJava (deps)",
+        unixGradlew,
+        tasks,
+        { cwd: runDir, env: gEnv, stdio: ["ignore", "pipe", "pipe"], shell: false },
+        DEP_GRADLE_COMPILE_TIMEOUT_MS
+      );
+    } else if (hasBat) {
+      await spawnWithTimeout(
+        "gradlew.bat compileJava (deps)",
+        "gradlew.bat",
+        tasks,
+        { cwd: runDir, env: gEnv, stdio: ["ignore", "pipe", "pipe"], shell: true },
+        DEP_GRADLE_COMPILE_TIMEOUT_MS
+      );
+    }
+    console.warn("[dep-scan] Gradle compileJava finished; Trivy should see build/ artifacts.");
+  } catch (e) {
+    console.warn(
+      "[dep-scan] Gradle compileJava skipped or failed (Trivy may still report 0 Java libs):",
+      e?.message || e
+    );
+  }
+}
+
 function runTrivy(args, cwd) {
   return spawnWithTimeout(
     "trivy",
@@ -81,8 +173,10 @@ function runTrivy(args, cwd) {
       shell: process.platform === "win32",
     },
     DEP_TRIVY_TIMEOUT_MS
-  ).then(({ stdout }) => stdout);
+  ).then(({ stdout, stderr }) => ({ stdout: stdout?.trim?.() ?? stdout, stderr: stderr?.trim?.() ?? stderr }));
 }
+
+const TRIVY_FS_COMMON = ["fs", "--format", "json", "--scanners", "vuln,license", "--list-all-pkgs", "."];
 
 function parseTrivyJson(raw) {
   try {
@@ -214,25 +308,35 @@ router.post("/scan/:projectId", auth, async (req, res) => {
       DEP_GIT_TIMEOUT_MS
     );
 
-    // Run trivy filesystem scan with JSON output + SBOM CycloneDX
-    const trivyFsOutput = await runTrivy(
-      ["fs", "--format", "json", "--scanners", "vuln,license", "."],
-      runDir
-    );
+    await bestEffortGradleCompileForTrivy(runDir);
+
+    // Run trivy filesystem scan with JSON output + SBOM CycloneDX (--list-all-pkgs fills package rows without CVEs)
+    const fsScan = await runTrivy(TRIVY_FS_COMMON, runDir);
+    const trivyFsJson = typeof fsScan === "object" ? fsScan.stdout : fsScan;
 
     let sbomOutput = null;
     try {
-      sbomOutput = await runTrivy(
-        ["fs", "--format", "cyclonedx", "--scanners", "vuln,license", "."],
-        runDir
-      );
+      const sb = await runTrivy(["fs", "--format", "cyclonedx", "--scanners", "vuln,license", "."], runDir);
+      sbomOutput = typeof sb === "object" ? sb.stdout : sb;
     } catch {
       sbomOutput = null;
     }
 
-    const trivyData = parseTrivyJson(trivyFsOutput);
+    const trivyData = parseTrivyJson(trivyFsJson || "");
     const components = trivyData ? extractComponents(trivyData) : [];
     const summary = summarize(components);
+
+    if (components.length === 0 && trivyData) {
+      const errTail = typeof fsScan === "object" && fsScan.stderr ? String(fsScan.stderr).slice(0, 800) : "";
+      console.warn(
+        "[dep-scan] Trivy returned 0 components. Gradle/Java often need JDK 17 (SAST_GRADLE_JAVA_HOME), " +
+          "or a *.gradle.lockfile / pom.xml. Trivy stderr (tail):",
+        errTail || "(empty)"
+      );
+    }
+    if (!trivyData && (trivyFsJson || "").length > 0) {
+      console.warn("[dep-scan] Trivy stdout was not valid JSON (first 200 chars):", String(trivyFsJson).slice(0, 200));
+    }
 
     await pool.query("DELETE FROM sbom_components WHERE project_id = $1", [projectId]);
 
