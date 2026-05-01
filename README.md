@@ -150,6 +150,28 @@ For PostgreSQL 15+ schema permission issues, connect specifically to `cloudsenti
 
 ---
 
+## After `git clone` (required)
+
+This repository does **not** include **`node_modules`**. If you skip install you will see **`Cannot find module 'express'`** (or similar).
+
+**Option A — monorepo root (recommended after clone):**
+
+```bash
+cd CloudSentinel
+npm install          # installs root + backend + frontend workspaces
+npm run dev:backend  # or: cd backend && npm run dev
+```
+
+**Option B — backend only:**
+
+```bash
+cd CloudSentinel/backend
+npm install
+npm run dev
+```
+
+---
+
 ## Run Locally
 
 ## Backend
