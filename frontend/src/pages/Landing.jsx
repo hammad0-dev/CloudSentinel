@@ -1,14 +1,14 @@
 import { Link } from "react-router-dom";
-import { ClipboardCheck, Code2, GitBranch, Globe, KeyRound, Server, Shield, Zap } from "lucide-react";
+import { ClipboardCheck, Code2, GitBranch, KeyRound, Server, Shield, Zap } from "lucide-react";
 
 export default function Landing() {
   const features = [
-    { icon: Code2, title: "SAST Scanning", desc: "Analyze source code for SQL injection, XSS, hardcoded secrets and 100+ vulnerability types.", color: "text-[var(--accent-green)]" },
-    { icon: Globe, title: "DAST Testing", desc: "Test your running application dynamically. Simulate real attacker behavior against live endpoints.", color: "text-[var(--accent-yellow)]" },
-    { icon: KeyRound, title: "Secrets Detection", desc: "Catch exposed API keys, tokens and passwords before they reach production or git history.", color: "text-[var(--accent-red)]" },
-    { icon: Server, title: "IaC Security", desc: "Secure Terraform, Docker and Kubernetes configs before deployment.", color: "text-[var(--accent-purple)]" },
-    { icon: ClipboardCheck, title: "Compliance Reports", desc: "Auto-generate OWASP, SOC2, GDPR and ISO27001 compliance reports.", color: "text-[var(--accent-green)]" },
-    { icon: GitBranch, title: "Pipeline Protection", desc: "Embed security checks directly into CI/CD for shift-left security.", color: "text-[var(--accent-yellow)]" },
+    { icon: Code2, title: "SAST Scanning", desc: "Analyze source code for SQL injection, XSS, hardcoded secrets and 100+ vulnerability types." },
+    { icon: KeyRound, title: "Secrets Detection", desc: "Catch exposed API keys, tokens and passwords before they reach production or git history." },
+    { icon: Server, title: "IaC Security", desc: "Secure Terraform, Docker and Kubernetes configurations before deployment." },
+    { icon: ClipboardCheck, title: "Compliance Reports", desc: "Generate OWASP, SOC2, GDPR and ISO27001 evidence from active scans." },
+    { icon: GitBranch, title: "Pipeline Protection", desc: "Embed checks in CI/CD and block high-risk merges before release." },
+    { icon: Zap, title: "Real-time Monitoring", desc: "Track scan trends, critical findings, and remediation velocity in one dashboard." },
   ];
 
   return (
@@ -25,57 +25,60 @@ export default function Landing() {
           </div>
         </div>
       </header>
-      <section className="max-w-7xl mx-auto px-6 py-24 text-center">
-        <p className="text-[var(--text-secondary)] mb-4">Trusted by 500+ development teams</p>
-        <h1 className="text-6xl font-bold mb-4">Secure Your Code Before It Ships</h1>
-        <p className="text-xl text-[var(--text-secondary)] max-w-3xl mx-auto">
-          AI-powered security scanning for modern DevOps teams. Detect vulnerabilities in code, dependencies, containers and cloud in minutes.
-        </p>
-        <div className="mt-8 flex justify-center gap-3">
-          <Link className="primary-btn px-6 py-3" to="/register">Get Started Free</Link>
-          <button className="secondary-btn px-6 py-3">Watch Demo</button>
+      <section className="max-w-7xl mx-auto px-6 py-24 grid lg:grid-cols-2 gap-10 items-center">
+        <div>
+          <p className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1 text-xs text-[var(--text-secondary)] mb-4">
+            Enterprise Cloud Security
+          </p>
+          <h1 className="text-5xl md:text-6xl font-bold leading-tight">
+            Secure Your{" "}
+            <span className="bg-clip-text text-transparent bg-gradient-to-r from-[var(--text-primary)] to-[var(--accent-blue)]">
+              Applications
+            </span>
+          </h1>
+          <p className="text-xl text-[var(--text-secondary)] max-w-xl mt-5">
+            CloudSentinel integrates threat modeling, CI/CD security scanning and runtime monitoring to protect your
+            applications from code to cloud.
+          </p>
+          <div className="mt-8 flex gap-3">
+            <Link className="primary-btn px-6 py-3" to="/register">Start Free Trial</Link>
+            <Link className="secondary-btn px-6 py-3" to="/login">Sign In</Link>
+          </div>
         </div>
-        <div className="mt-10 grid grid-cols-2 md:grid-cols-4 gap-3 max-w-3xl mx-auto">
-          {["SOC2", "ISO27001", "GDPR", "OWASP Top 10"].map((b) => <div key={b} className="card py-2 text-sm text-[var(--text-secondary)]">{b}</div>)}
+        <div className="card p-8 relative overflow-hidden">
+          <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full bg-[var(--accent-blue)]/15 blur-2xl" />
+          <div className="absolute -bottom-12 -left-12 w-48 h-48 rounded-full bg-[var(--accent-purple)]/15 blur-2xl" />
+          <div className="relative z-10 space-y-5">
+            <div className="inline-flex rounded-full border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1 text-xs text-[var(--text-secondary)]">
+              System Status: Operational
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-[var(--bg-tertiary)] border border-[var(--border-subtle)] rounded-lg p-3">
+                <p className="text-xs text-[var(--text-secondary)]">Active Projects</p>
+                <p className="text-2xl font-semibold mt-1">247</p>
+              </div>
+              <div className="bg-[var(--bg-tertiary)] border border-[var(--border-subtle)] rounded-lg p-3">
+                <p className="text-xs text-[var(--text-secondary)]">Critical Alerts</p>
+                <p className="text-2xl font-semibold mt-1 text-[var(--accent-red)]">3</p>
+              </div>
+              <div className="bg-[var(--bg-tertiary)] border border-[var(--border-subtle)] rounded-lg p-3">
+                <p className="text-xs text-[var(--text-secondary)]">Compliance</p>
+                <p className="text-2xl font-semibold mt-1">89%</p>
+              </div>
+              <div className="bg-[var(--bg-tertiary)] border border-[var(--border-subtle)] rounded-lg p-3">
+                <p className="text-xs text-[var(--text-secondary)]">Avg Security Score</p>
+                <p className="text-2xl font-semibold mt-1">74/100</p>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section className="max-w-7xl mx-auto px-6 pb-20">
-        <h2 className="text-3xl font-bold text-center mb-10">Built For Modern DevOps Workflows</h2>
-        <div className="grid md:grid-cols-3 gap-4">
-          <div className="card overflow-hidden">
-            <img
-              src="https://images.unsplash.com/photo-1518773553398-650c184e0bb3?auto=format&fit=crop&w=1200&q=80"
-              alt="Cloud deployment infrastructure"
-              className="h-52 w-full object-cover border-b border-[var(--border-subtle)]"
-            />
-            <div className="p-4">
-              <p className="font-semibold">Cloud Deployment Security</p>
-              <p className="text-sm text-[var(--text-secondary)] mt-1">Track risks across infrastructure, containers, and cloud runtime.</p>
-            </div>
-          </div>
-          <div className="card overflow-hidden">
-            <img
-              src="https://images.unsplash.com/photo-1667372393119-3d4c48d07fc9?auto=format&fit=crop&w=1200&q=80"
-              alt="CI/CD pipeline automation and build flow"
-              className="h-52 w-full object-cover border-b border-[var(--border-subtle)]"
-            />
-            <div className="p-4">
-              <p className="font-semibold">CI/CD Pipeline Hardening</p>
-              <p className="text-sm text-[var(--text-secondary)] mt-1">Run SAST checks in every pipeline stage before production release.</p>
-            </div>
-          </div>
-          <div className="card overflow-hidden">
-            <img
-              src="https://images.unsplash.com/photo-1563986768609-322da13575f3?auto=format&fit=crop&w=1200&q=80"
-              alt="Security operations center threat monitoring"
-              className="h-52 w-full object-cover border-b border-[var(--border-subtle)]"
-            />
-            <div className="p-4">
-              <p className="font-semibold">Threat Monitoring & Response</p>
-              <p className="text-sm text-[var(--text-secondary)] mt-1">Visualize vulnerabilities, prioritize fixes, and keep compliance aligned.</p>
-            </div>
-          </div>
+      <section className="max-w-7xl mx-auto px-6 pb-12">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {["SOC2", "ISO27001", "GDPR", "OWASP Top 10"].map((b) => (
+            <div key={b} className="card py-2 text-sm text-[var(--text-secondary)] text-center">{b}</div>
+          ))}
         </div>
       </section>
 
@@ -93,7 +96,7 @@ export default function Landing() {
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {features.map((f) => (
             <div key={f.title} className="card p-5">
-              <f.icon className={`w-6 h-6 ${f.color}`} />
+              <f.icon className="w-6 h-6 text-[var(--accent-blue)]" />
               <h3 className="font-bold mt-3">{f.title}</h3>
               <p className="text-[var(--text-secondary)] mt-2 text-sm">{f.desc}</p>
             </div>

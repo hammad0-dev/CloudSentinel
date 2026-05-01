@@ -1,0 +1,373 @@
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const { spawn } = require("child_process");
+const pool = require("../db");
+const auth = require("../middleware/auth");
+
+const router = express.Router();
+
+const TRIVY_CMD = process.env.TRIVY_CMD || "trivy";
+const CLONE_DIR = () => path.resolve(process.env.CLONE_DIR || "/tmp/cloudsentinel-scans");
+
+function parseEnvMs(raw, fallback) {
+  const n = Number.parseInt(String(raw ?? "").trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const DEP_GIT_TIMEOUT_MS = parseEnvMs(process.env.DEP_GIT_TIMEOUT_MS, 900_000);
+const DEP_TRIVY_TIMEOUT_MS = parseEnvMs(process.env.DEP_TRIVY_TIMEOUT_MS, 3_600_000);
+
+const gitEnv = () => {
+  const base = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+  if (process.platform !== "win32") base.GIT_ASKPASS = "/bin/false";
+  return base;
+};
+
+/** Kill child on timeout — avoids RUNNING dependency scans stuck forever (hung git/trivy). */
+function spawnWithTimeout(label, command, args, spawnOptions, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, spawnOptions);
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill("SIGKILL");
+      } catch (_) {
+        /* ignore */
+      }
+      reject(
+        new Error(
+          `${label}: timed out after ${Math.round(timeoutMs / 1000)}s. Large Java repos (e.g. WebGoat) ` +
+            `and first Trivy run (vuln DB download) can be slow — increase DEP_TRIVY_TIMEOUT_MS or DEP_GIT_TIMEOUT_MS in .env.`
+        )
+      );
+    }, timeoutMs);
+
+    child.stdout?.on("data", (c) => {
+      stdout += c;
+    });
+    child.stderr?.on("data", (c) => {
+      stderr += c;
+    });
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) resolve({ stdout, stderr });
+      else reject(new Error((stderr || stdout || `${label} exited ${code}`).trim()));
+    });
+  });
+}
+
+function runTrivy(args, cwd) {
+  return spawnWithTimeout(
+    "trivy",
+    TRIVY_CMD,
+    args,
+    {
+      cwd: cwd || process.cwd(),
+      env: { ...process.env, TRIVY_NO_PROGRESS: "true" },
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    },
+    DEP_TRIVY_TIMEOUT_MS
+  ).then(({ stdout }) => stdout);
+}
+
+function parseTrivyJson(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function summarize(components) {
+  const s = { critical: 0, high: 0, medium: 0, low: 0, unknown: 0, total: 0 };
+  components.forEach((c) => {
+    const sev = (c.severity || "UNKNOWN").toUpperCase();
+    s.total++;
+    if (sev === "CRITICAL") s.critical++;
+    else if (sev === "HIGH") s.high++;
+    else if (sev === "MEDIUM") s.medium++;
+    else if (sev === "LOW") s.low++;
+    else s.unknown++;
+  });
+  return s;
+}
+
+function extractComponents(trivyData) {
+  const components = [];
+  const results = trivyData?.Results || [];
+  results.forEach((result) => {
+    const packages = result.Packages || [];
+    const vulns = result.Vulnerabilities || [];
+
+    // Trivy fs JSON frequently contains Vulnerabilities without Packages.
+    // Always ingest vulnerability rows directly so CVEs are not dropped.
+    vulns.forEach((v) => {
+      components.push({
+        pkg_name: v.PkgName || "unknown",
+        pkg_version: v.InstalledVersion || "",
+        pkg_type: result.Type || "unknown",
+        license: null,
+        cve_id: v.VulnerabilityID || null,
+        severity: v.Severity || "UNKNOWN",
+        cvss_score: v.CVSS?.nvd?.V3Score || v.CVSS?.redhat?.V3Score || null,
+        fixed_version: v.FixedVersion || null,
+        description: v.Description
+          ? v.Description.slice(0, 300)
+          : (v.Title || null),
+      });
+    });
+
+    const pkgVulnMap = {};
+    vulns.forEach((v) => {
+      const key = `${v.PkgName}@${v.InstalledVersion}`;
+      if (!pkgVulnMap[key]) pkgVulnMap[key] = [];
+      pkgVulnMap[key].push(v);
+    });
+
+    packages.forEach((pkg) => {
+      const key = `${pkg.Name}@${pkg.Version}`;
+      const pkgVulns = pkgVulnMap[key] || [];
+      if (pkgVulns.length === 0) {
+        components.push({
+          pkg_name: pkg.Name,
+          pkg_version: pkg.Version || "",
+          pkg_type: result.Type || "unknown",
+          license: (pkg.Licenses || []).join(", ") || null,
+          cve_id: null,
+          severity: "NONE",
+          cvss_score: null,
+          fixed_version: null,
+          description: null,
+        });
+      }
+    });
+  });
+  return components;
+}
+
+// POST /api/dependencies/scan/:projectId
+// Clone repo (or reuse existing) then run trivy fs on it.
+router.post("/scan/:projectId", auth, async (req, res) => {
+  const projectId = Number.parseInt(String(req.params.projectId ?? "").trim(), 10);
+  if (!Number.isInteger(projectId) || projectId < 1) {
+    return res.status(400).json({ error: "Invalid project id" });
+  }
+  let scanId = null;
+  let cloneTarget = null;
+
+  try {
+    const projectRes = await pool.query(
+      "SELECT * FROM projects WHERE id = $1 AND user_id = $2",
+      [projectId, req.user.id]
+    );
+    if (!projectRes.rows.length) return res.status(404).json({ error: "Project not found" });
+
+    const project = projectRes.rows[0];
+
+    const runRow = await pool.query(
+      "INSERT INTO dependency_scans (project_id, status, target_type, started_at) VALUES ($1, 'RUNNING', 'fs', NOW()) RETURNING id",
+      [projectId]
+    );
+    scanId = runRow.rows[0].id;
+
+    const cloneRoot = CLONE_DIR();
+
+    if (!fs.existsSync(cloneRoot)) {
+      fs.mkdirSync(cloneRoot, { recursive: true });
+    }
+    cloneTarget = fs.mkdtempSync(path.join(cloneRoot, `${projectId}-dep-`));
+    const runDir = cloneTarget;
+
+    const token =
+      project.github_token?.trim() ||
+      (process.env.GITHUB_TOKEN?.trim() || null);
+    let cloneUrl = project.repo_url;
+    if (token && /^https:\/\/(www\.)?github\.com\//i.test(cloneUrl)) {
+      const u = new URL(cloneUrl);
+      u.username = "x-access-token";
+      u.password = token;
+      cloneUrl = u.href;
+    }
+    await spawnWithTimeout(
+      "git clone (dependencies)",
+      "git",
+      ["clone", "--depth", "1", cloneUrl, runDir],
+      {
+        env: gitEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: process.platform === "win32",
+      },
+      DEP_GIT_TIMEOUT_MS
+    );
+
+    // Run trivy filesystem scan with JSON output + SBOM CycloneDX
+    const trivyFsOutput = await runTrivy(
+      ["fs", "--format", "json", "--scanners", "vuln,license", "."],
+      runDir
+    );
+
+    let sbomOutput = null;
+    try {
+      sbomOutput = await runTrivy(
+        ["fs", "--format", "cyclonedx", "--scanners", "vuln,license", "."],
+        runDir
+      );
+    } catch {
+      sbomOutput = null;
+    }
+
+    const trivyData = parseTrivyJson(trivyFsOutput);
+    const components = trivyData ? extractComponents(trivyData) : [];
+    const summary = summarize(components);
+
+    await pool.query("DELETE FROM sbom_components WHERE project_id = $1", [projectId]);
+
+    for (const c of components) {
+      await pool.query(
+        `INSERT INTO sbom_components
+          (scan_id, project_id, pkg_name, pkg_version, pkg_type, license, cve_id, severity, cvss_score, fixed_version, description)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [scanId, projectId, c.pkg_name, c.pkg_version, c.pkg_type, c.license, c.cve_id, c.severity, c.cvss_score, c.fixed_version, c.description]
+      );
+    }
+
+    await pool.query(
+      `UPDATE dependency_scans SET
+        status = 'COMPLETED',
+        total_packages = $1,
+        critical = $2, high = $3, medium = $4, low = $5, unknown = $6,
+        sbom_json = $7,
+        completed_at = NOW()
+       WHERE id = $8`,
+      [components.length, summary.critical, summary.high, summary.medium, summary.low, summary.unknown, sbomOutput, scanId]
+    );
+
+    if (fs.existsSync(cloneTarget)) {
+      fs.rmSync(cloneTarget, { recursive: true, force: true });
+    }
+    return res.json({ success: true, scanId, summary, total: components.length });
+  } catch (error) {
+    if (scanId) {
+      await pool.query(
+        "UPDATE dependency_scans SET status = 'FAILED', completed_at = NOW() WHERE id = $1",
+        [scanId]
+      );
+    }
+    if (cloneTarget && fs.existsSync(cloneTarget)) {
+      fs.rmSync(cloneTarget, { recursive: true, force: true });
+    }
+    return res.status(500).json({ error: error.message || "Dependency scan failed" });
+  }
+});
+
+// GET /api/dependencies/:projectId — latest results + summary
+router.get("/:projectId", auth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const projectRes = await pool.query(
+      "SELECT id FROM projects WHERE id = $1 AND user_id = $2",
+      [projectId, req.user.id]
+    );
+    if (!projectRes.rows.length) return res.status(404).json({ error: "Project not found" });
+
+    const scanRes = await pool.query(
+      "SELECT id, status, total_packages, critical, high, medium, low, unknown, started_at, completed_at FROM dependency_scans WHERE project_id = $1 ORDER BY started_at DESC LIMIT 1",
+      [projectId]
+    );
+    const latestScan = scanRes.rows[0] || null;
+
+    const componentsRes = await pool.query(
+      "SELECT pkg_name, pkg_version, pkg_type, license, cve_id, severity, cvss_score, fixed_version, description FROM sbom_components WHERE project_id = $1 ORDER BY severity, pkg_name",
+      [projectId]
+    );
+
+    const vulnerable = componentsRes.rows.filter((c) => c.cve_id);
+    const packages = componentsRes.rows;
+
+    const licenseMap = {};
+    packages.forEach((p) => {
+      const lic = p.license || "Unknown";
+      licenseMap[lic] = (licenseMap[lic] || 0) + 1;
+    });
+    const licenses = Object.entries(licenseMap).map(([name, value]) => ({ name, value }));
+
+    return res.json({ latestScan, packages, vulnerable, licenses });
+  } catch (error) {
+    return res.status(500).json({ error: "Server error. Please try again." });
+  }
+});
+
+// GET /api/dependencies/sbom/:projectId — download latest SBOM JSON (CycloneDX)
+router.get("/sbom/:projectId", auth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const projectRes = await pool.query(
+      "SELECT name FROM projects WHERE id = $1 AND user_id = $2",
+      [projectId, req.user.id]
+    );
+    if (!projectRes.rows.length) return res.status(404).json({ error: "Project not found" });
+
+    const scanRes = await pool.query(
+      "SELECT sbom_json, completed_at FROM dependency_scans WHERE project_id = $1 AND status = 'COMPLETED' ORDER BY started_at DESC LIMIT 1",
+      [projectId]
+    );
+    if (!scanRes.rows.length || !scanRes.rows[0].sbom_json) {
+      return res.status(404).json({ error: "No SBOM available. Run a scan first." });
+    }
+
+    const projectName = projectRes.rows[0].name.replace(/[^a-z0-9-_]/gi, "_");
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="sbom-${projectName}.json"`);
+    return res.send(scanRes.rows[0].sbom_json);
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to export SBOM" });
+  }
+});
+
+// GET /api/dependencies/report/:projectId — full report payload
+router.get("/report/:projectId", auth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const projectRes = await pool.query(
+      "SELECT id, name, repo_url, language, security_score FROM projects WHERE id = $1 AND user_id = $2",
+      [projectId, req.user.id]
+    );
+    if (!projectRes.rows.length) return res.status(404).json({ error: "Project not found" });
+
+    const scanRes = await pool.query(
+      "SELECT id, status, total_packages, critical, high, medium, low, unknown, started_at, completed_at FROM dependency_scans WHERE project_id = $1 ORDER BY started_at DESC LIMIT 5",
+      [projectId]
+    );
+    const componentsRes = await pool.query(
+      "SELECT pkg_name, pkg_version, pkg_type, license, cve_id, severity, cvss_score, fixed_version, description FROM sbom_components WHERE project_id = $1 ORDER BY severity",
+      [projectId]
+    );
+
+    return res.json({
+      generatedAt: new Date().toISOString(),
+      project: projectRes.rows[0],
+      scans: scanRes.rows,
+      summary: scanRes.rows[0] || null,
+      components: componentsRes.rows,
+      vulnerable: componentsRes.rows.filter((c) => c.cve_id),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to generate report" });
+  }
+});
+
+module.exports = router;

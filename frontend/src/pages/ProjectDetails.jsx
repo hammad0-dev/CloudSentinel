@@ -75,11 +75,26 @@ export default function ProjectDetails() {
     load();
   }, [id]);
 
+  useEffect(() => {
+    if (!id || project?.status !== "Scanning") return undefined;
+    const t = setInterval(async () => {
+      try {
+        const { data } = await api.get(`/projects/${id}`);
+        setProject(normalize(data.project || {}, data.latestScan ?? null));
+        const scansRes = await api.get(`/projects/${id}/scans`);
+        setScanHistory(scansRes.data.scans || []);
+      } catch {
+        /* ignore transient errors while polling */
+      }
+    }, 5000);
+    return () => clearInterval(t);
+  }, [id, project?.status]);
+
   const onScan = async () => {
     if (!project) return;
     setProject((prev) => ({ ...prev, status: "Scanning" }));
     try {
-      await api.post(`/sast/scan/${id}`);
+      await api.post(`/sast/scan/${id}`, null, { timeout: 3_600_000 });
       const detail = await api.get(`/projects/${id}`);
       const p = normalize(detail.data.project || {}, detail.data.latestScan ?? null);
       setProject(p);
@@ -145,7 +160,7 @@ export default function ProjectDetails() {
       <div className="card p-6">
         <h3 className="text-lg font-semibold mb-4">Scan History</h3>
         {scanHistory.length === 0 ? (
-          <p className="text-[var(--text-secondary)]">No scans yet. Trigger your first scan to build history.</p>
+          <p className="text-[var(--text-secondary)]">No scans yet. Run a scan once to populate this history.</p>
         ) : (
           <div className="space-y-3">
             {scanHistory.map((scan) => (

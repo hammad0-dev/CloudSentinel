@@ -28,8 +28,9 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="min-h-screen grid place-items-center bg-[var(--bg-primary)] px-4">
-      <div className="card w-full max-w-md p-8">
+    <div className="min-h-screen grid place-items-center bg-[radial-gradient(circle_at_top,_#172952_0%,_#0a1226_45%,_#050915_100%)] px-4">
+      <div className="w-full max-w-md p-8 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)]/85 backdrop-blur">
+        <p className="text-sm text-[var(--accent-blue)] mb-2 font-semibold">CloudSentinel</p>
         <h1 className="text-2xl font-bold mb-2">Set New Password</h1>
         {!done ? (
           <>
@@ -42,8 +43,8 @@ export default function ResetPassword() {
           </>
         ) : (
           <div className="space-y-3">
-            <p className="text-[var(--accent-green)]">Password reset successful.</p>
-            <Link to="/login" className="text-[var(--accent-green)]">Go to Login</Link>
+            <p className="text-[var(--accent-blue)]">Password reset successful.</p>
+            <Link to="/login" className="text-[var(--accent-blue)]">Go to Login</Link>
           </div>
         )}
       </div>

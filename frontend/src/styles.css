@@ -3,21 +3,21 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #121715;
-  --bg-secondary: #1a211e;
-  --bg-tertiary: #232b27;
-  --bg-hover: #2b3530;
-  --border: #3a4740;
-  --border-subtle: #2f3934;
-  --accent-blue: #3e8f63;
-  --accent-blue-hover: #347a54;
-  --accent-green: #56b37c;
-  --accent-yellow: #c89b3c;
-  --accent-red: #d06060;
-  --accent-purple: #8f79c6;
-  --text-primary: #edf2ee;
-  --text-secondary: #a9b4ad;
-  --text-tertiary: #7b8881;
+  --bg-primary: #050915;
+  --bg-secondary: #0b1220;
+  --bg-tertiary: #121b2e;
+  --bg-hover: #17233a;
+  --border: #24324d;
+  --border-subtle: #1b2942;
+  --accent-blue: #4f7cff;
+  --accent-blue-hover: #3f6af0;
+  --accent-green: #3fbf9b;
+  --accent-yellow: #d4a24a;
+  --accent-red: #e06666;
+  --accent-purple: #8d7bff;
+  --text-primary: #e6ecff;
+  --text-secondary: #a6b4d6;
+  --text-tertiary: #7f8db3;
 }
 
 html,
@@ -156,5 +156,15 @@ body {
   }
   100% {
     background-position: 0 50%;
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
   }
 }

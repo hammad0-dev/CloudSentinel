@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import toast from "react-hot-toast";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Download } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import SeverityBadge from "../components/SeverityBadge";
 import api from "../utils/api";
@@ -41,13 +42,73 @@ export default function SASTResults() {
   const runScan = async () => {
     setScanLoading(true);
     try {
-      await api.post(`/sast/scan/${id}`);
+      await api.post(`/sast/scan/${id}`, null, { timeout: 3_600_000 });
       toast.success("SAST scan completed");
       load();
     } catch (error) {
       toast.error(error.response?.data?.error || "Scan failed");
     } finally {
       setScanLoading(false);
+    }
+  };
+
+  const downloadBlob = (content, mimeType, filename) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const buildHtmlReport = (report) => {
+    const findingsRows = (report.topFindings || [])
+      .map(
+        (x) =>
+          `<tr><td>${x.severity || "INFO"}</td><td>${x.rule || "-"}</td><td>${x.message || "-"}</td><td>${x.file_path || "-"}</td><td>${x.line_number ?? "-"}</td></tr>`
+      )
+      .join("");
+
+    return `<!doctype html><html><head><meta charset="utf-8" /><title>SAST Report</title><style>
+      body { font-family: Inter, system-ui, sans-serif; background:#0f1412; color:#e7efe9; margin:24px; }
+      h1,h2 { margin:0 0 8px; } .muted { color:#a9b4ad; }
+      .card { background:#1a211e; border:1px solid #2f3934; border-radius:8px; padding:14px; margin:14px 0; }
+      .grid { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:10px; }
+      .kpi { background:#232b27; border:1px solid #3a4740; border-radius:8px; padding:10px; }
+      table { width:100%; border-collapse: collapse; font-size:13px; } th, td { border:1px solid #2f3934; padding:8px; text-align:left; } th { background:#232b27; }
+    </style></head><body>
+      <h1>CloudSentinel SAST Report</h1>
+      <p class="muted">Generated at: ${new Date(report.generatedAt || Date.now()).toLocaleString()}</p>
+      <div class="card"><h2>Project</h2>
+        <p><strong>Name:</strong> ${report.project?.name || "-"}</p>
+        <p><strong>Repository:</strong> ${report.project?.repo_url || "-"}</p>
+        <p><strong>Language:</strong> ${report.project?.language || "Unknown"}</p>
+      </div>
+      <div class="card"><h2>Totals</h2><div class="grid">
+        <div class="kpi"><div class="muted">Issues</div><div>${report.totals?.issues ?? 0}</div></div>
+        <div class="kpi"><div class="muted">Critical</div><div>${report.totals?.critical ?? 0}</div></div>
+        <div class="kpi"><div class="muted">High</div><div>${report.totals?.high ?? 0}</div></div>
+        <div class="kpi"><div class="muted">Medium/Low</div><div>${report.totals?.medium ?? 0}</div></div>
+      </div></div>
+      <div class="card"><h2>Top Findings</h2>
+        <table><thead><tr><th>Severity</th><th>Rule</th><th>Message</th><th>File</th><th>Line</th></tr></thead>
+        <tbody>${findingsRows || '<tr><td colspan="5">No findings</td></tr>'}</tbody></table>
+      </div>
+    </body></html>`;
+  };
+
+  const exportReport = async () => {
+    try {
+      const res = await api.get(`/sast/report/${id}`);
+      downloadBlob(
+        buildHtmlReport(res.data),
+        "text/html",
+        `cloudsentinel-sast-report-${id}.html`
+      );
+      toast.success("SAST report exported");
+    } catch {
+      toast.error("Failed to export report");
     }
   };
 
@@ -79,7 +140,21 @@ export default function SASTResults() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="SAST Scan Results" subtitle={`Last scanned: ${data.lastScan || "Not scanned"}`} actions={<button className="primary-btn" onClick={runScan} disabled={scanLoading}>{scanLoading ? "Scanning... Please wait" : "Run SAST Scan"}</button>} />
+      <PageHeader
+        title="SAST Scan Results"
+        subtitle={`Last scanned: ${data.lastScan || "Not scanned"}`}
+        actions={
+          <div className="flex items-center gap-2">
+            <button className="secondary-btn inline-flex items-center gap-2" onClick={exportReport}>
+              <Download size={14} />
+              Export Report
+            </button>
+            <button className="primary-btn" onClick={runScan} disabled={scanLoading}>
+              {scanLoading ? "Scanning... Please wait" : "Run SAST Scan"}
+            </button>
+          </div>
+        }
+      />
       {data.sonarMetrics ? (
         <div className="grid md:grid-cols-4 gap-4">
           <div className="card p-4">Bugs: {data.sonarMetrics.bugs}</div>

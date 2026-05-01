@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import api from "../lib/api";
-import { readLocalProjects, removeLocalProject, upsertLocalProject, writeLocalProjects } from "../lib/projectStorage";
+import { readLocalProjects, upsertLocalProject, writeLocalProjects } from "../lib/projectStorage";
 
 const emptyForm = { projectName: "", repositoryUrl: "", githubToken: "", description: "" };
 const statusStyles = {
@@ -119,20 +119,38 @@ export default function ProjectsPage() {
 
   const deleteProject = async (id) => {
     if (!window.confirm("Delete this project?")) return;
+    const sid = String(id);
+    const dropFromState = (prev) => {
+      const next = prev.filter((p) => String(p.id) !== sid);
+      writeLocalProjects(next);
+      return next;
+    };
+    if (sid.startsWith("local-")) {
+      setProjects((prev) => dropFromState(prev));
+      toast.success("Project removed");
+      return;
+    }
     try {
       await api.delete(`/projects/${id}`);
       toast.success("Project deleted");
-    } catch {
-      toast.error("API delete failed. Removed locally.");
+      setProjects((prev) => dropFromState(prev));
+    } catch (error) {
+      const msg =
+        error.response?.data?.error ||
+        (error.response?.status === 401
+          ? "Session expired. Sign in again, then delete the project."
+          : "Could not delete project on the server.");
+      toast.error(msg);
+      if (error.response?.status === 404) {
+        setProjects((prev) => dropFromState(prev));
+      }
     }
-    setProjects((prev) => prev.filter((p) => String(p.id) !== String(id)));
-    removeLocalProject(id);
   };
 
   const scanProject = async (project) => {
     setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, status: "Scanning" } : p)));
     try {
-      await api.post(`/sast/scan/${project.id}`);
+      await api.post(`/sast/scan/${project.id}`, null, { timeout: 3_600_000 });
       const { data } = await api.get("/projects");
       const list = (data.projects || []).map(normalize);
       setProjects(list);

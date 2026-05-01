@@ -1,63 +1,374 @@
-import { useState } from "react";
-import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import { useEffect, useMemo, useState } from "react";
+import { Cell, PieChart, Pie, ResponsiveContainer, Tooltip } from "recharts";
+import { AlertTriangle, Download, FileJson2, Package, ScanSearch, ShieldAlert } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import SeverityBadge from "../components/SeverityBadge";
+import api from "../lib/api";
 
-const rows = [
-  ["lodash", "4.17.11", "4.17.21", "CVE-2021-23337", "HIGH", "7.2"],
-  ["express", "4.17.1", "4.18.2", "CVE-2022-24999", "MEDIUM", "5.3"],
-  ["jsonwebtoken", "8.5.1", "9.0.0", "CVE-2022-23529", "HIGH", "8.1"],
-  ["axios", "0.21.1", "0.21.4", "CVE-2021-3749", "MEDIUM", "6.5"],
-  ["minimist", "1.2.5", "1.2.6", "CVE-2021-44906", "CRITICAL", "9.8"],
-  ["node-fetch", "2.6.1", "2.6.7", "CVE-2022-0235", "HIGH", "8.8"],
-  ["qs", "6.5.2", "6.5.3", "CVE-2022-24999", "HIGH", "7.5"],
-  ["debug", "2.6.8", "2.6.9", "CVE-2017-16137", "LOW", "3.7"],
-];
+const PIE_COLORS = ["#d06060", "#c89b3c", "#3e8f63", "#a9b4ad", "#8f79c6"];
+const SEV_ORDER = { CRITICAL: 1, HIGH: 2, MEDIUM: 3, LOW: 4, NONE: 5, UNKNOWN: 6 };
 
 export default function Dependencies() {
+  const [projects, setProjects] = useState([]);
+  const [selected, setSelected] = useState("");
   const [tab, setTab] = useState("Vulnerabilities");
-  const licenses = [
-    { name: "MIT", value: 98, color: "#10b981" },
-    { name: "Apache 2.0", value: 31, color: "#22c55e" },
-    { name: "BSD-3", value: 8, color: "#34d399" },
-    { name: "GPL-3.0", value: 2, color: "#ef4444" },
-    { name: "ISC", value: 3, color: "#4ade80" },
-    { name: "Unknown", value: 3, color: "#f59e0b" },
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [sbomLoading, setSbomLoading] = useState(false);
+
+  useEffect(() => {
+    api
+      .get("/projects")
+      .then((r) => {
+        const list = r.data.projects || [];
+        setProjects(list);
+        if (list.length) setSelected(String(list[0].id));
+      })
+      .catch(() => setProjects([]));
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    setLoading(true);
+    api
+      .get(`/dependencies/${selected}`)
+      .then((r) => setData(r.data))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [selected]);
+
+  useEffect(() => {
+    const st = String(data?.latestScan?.status || "").toUpperCase();
+    if (!selected || st !== "RUNNING") return undefined;
+    const t = setInterval(() => {
+      api
+        .get(`/dependencies/${selected}`)
+        .then((r) => setData(r.data))
+        .catch(() => {});
+    }, 4000);
+    return () => clearInterval(t);
+  }, [selected, data?.latestScan?.status]);
+
+  const runScan = async () => {
+    if (!selected) return;
+    setScanning(true);
+    try {
+      await api.post(`/dependencies/scan/${selected}`, null, {
+        timeout: 3_600_000,
+      });
+      const r = await api.get(`/dependencies/${selected}`);
+      setData(r.data);
+    } catch (error) {
+      alert(error.response?.data?.error || "Scan failed");
+      try {
+        const r = await api.get(`/dependencies/${selected}`);
+        setData(r.data);
+      } catch {
+        /* noop */
+      }
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const exportSbom = async () => {
+    if (!selected) return;
+    setSbomLoading(true);
+    try {
+      const r = await api.get(`/dependencies/sbom/${selected}`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([r.data], { type: "application/json" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `sbom-${selected}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(error.response?.data?.error || "No SBOM available. Run a scan first.");
+    } finally {
+      setSbomLoading(false);
+    }
+  };
+
+  const exportReport = async () => {
+    if (!selected) return;
+    try {
+      const r = await api.get(`/dependencies/report/${selected}`);
+      const project = r.data?.project || {};
+      const summary = r.data?.summary || {};
+      const rows = (r.data?.vulnerable || [])
+        .map(
+          (v) =>
+            `<tr><td>${v.pkg_name || "-"}</td><td>${v.pkg_version || "-"}</td><td>${v.cve_id || "-"}</td><td>${v.severity || "-"}</td><td>${v.fixed_version || "-"}</td></tr>`
+        )
+        .join("");
+      const html = `<!doctype html><html><head><meta charset="utf-8" /><title>Dependency Report</title><style>
+        body{font-family:Inter,system-ui,sans-serif;background:#0f1412;color:#e7efe9;margin:24px}
+        h1,h2{margin:0 0 8px}.muted{color:#a9b4ad}
+        .card{background:#1a211e;border:1px solid #2f3934;border-radius:8px;padding:14px;margin:14px 0}
+        .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+        .kpi{background:#232b27;border:1px solid #3a4740;border-radius:8px;padding:10px}
+        table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid #2f3934;padding:8px;text-align:left}th{background:#232b27}
+      </style></head><body>
+        <h1>CloudSentinel Dependency Report</h1>
+        <p class="muted">Generated at: ${new Date(r.data?.generatedAt || Date.now()).toLocaleString()}</p>
+        <div class="card"><h2>Project</h2>
+          <p><strong>Name:</strong> ${project.name || "-"}</p>
+          <p><strong>Repository:</strong> ${project.repo_url || "-"}</p>
+          <p><strong>Language:</strong> ${project.language || "Unknown"}</p>
+        </div>
+        <div class="card"><h2>Latest Scan Summary</h2><div class="grid">
+          <div class="kpi"><div class="muted">Packages</div><div>${summary.total_packages ?? 0}</div></div>
+          <div class="kpi"><div class="muted">Critical</div><div>${summary.critical ?? 0}</div></div>
+          <div class="kpi"><div class="muted">High</div><div>${summary.high ?? 0}</div></div>
+          <div class="kpi"><div class="muted">Medium</div><div>${summary.medium ?? 0}</div></div>
+        </div></div>
+        <div class="card"><h2>Vulnerabilities</h2>
+          <table><thead><tr><th>Package</th><th>Installed</th><th>CVE</th><th>Severity</th><th>Fixed In</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="5">No vulnerabilities found</td></tr>'}</tbody></table>
+        </div>
+      </body></html>`;
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `dependency-report-${selected}.html`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Failed to export report");
+    }
+  };
+
+  const vulnerable = useMemo(() => {
+    if (!data?.vulnerable) return [];
+    return [...data.vulnerable].sort(
+      (a, b) => (SEV_ORDER[(a.severity || "UNKNOWN").toUpperCase()] || 9) - (SEV_ORDER[(b.severity || "UNKNOWN").toUpperCase()] || 9)
+    );
+  }, [data]);
+
+  const licenseData = useMemo(() => {
+    if (!data?.licenses) return [];
+    return data.licenses.map((l, i) => ({ ...l, color: PIE_COLORS[i % PIE_COLORS.length] }));
+  }, [data]);
+
+  const scan = data?.latestScan;
+
+  const stats = [
+    { label: "Total Packages", value: scan?.total_packages ?? 0, icon: Package, color: "var(--text-primary)" },
+    { label: "Critical", value: scan?.critical ?? 0, icon: ShieldAlert, color: "var(--accent-red)" },
+    { label: "High", value: scan?.high ?? 0, icon: AlertTriangle, color: "var(--accent-yellow)" },
+    { label: "Medium", value: (scan?.medium ?? 0), icon: AlertTriangle, color: "var(--accent-blue)" },
   ];
+
   return (
     <div className="space-y-6">
-      <PageHeader title="Dependencies & SBOM" subtitle="Software Bill of Materials" actions={<><button className="primary-btn">Export SBOM JSON</button><button className="primary-btn">Scan Now</button></>} />
+      <PageHeader
+        title="Dependencies & SBOM"
+        subtitle="Trivy-powered supply chain vulnerability scanning"
+        actions={
+          <div className="flex items-center gap-2 flex-wrap">
+            <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)}>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <button className="primary-btn inline-flex items-center gap-2" onClick={runScan} disabled={scanning || !selected}>
+              <ScanSearch size={14} />
+              {scanning ? "Scanning..." : "Run Scan"}
+            </button>
+            <button className="secondary-btn inline-flex items-center gap-2" onClick={exportSbom} disabled={sbomLoading || !selected}>
+              <FileJson2 size={14} />
+              {sbomLoading ? "Exporting..." : "Export SBOM"}
+            </button>
+            <button className="secondary-btn inline-flex items-center gap-2" onClick={exportReport} disabled={!selected}>
+              <Download size={14} />
+              Export Report
+            </button>
+          </div>
+        }
+      />
+
+      {scan && (
+        <div className="card px-4 py-2 text-xs text-[var(--text-secondary)] flex items-center gap-4 flex-wrap">
+          <span>Last scan: {scan.completed_at ? new Date(scan.completed_at).toLocaleString() : "—"}</span>
+          <span className={`pill-badge ${scan.status === "COMPLETED" ? "border-[var(--accent-green)] text-[var(--accent-green)]" : scan.status === "FAILED" ? "border-[var(--accent-red)] text-[var(--accent-red)]" : "border-[var(--accent-yellow)] text-[var(--accent-yellow)]"}`}>
+            {scan.status}
+          </span>
+        </div>
+      )}
+
       <div className="grid md:grid-cols-4 gap-4">
-        <div className="card p-4">Total: 142</div>
-        <div className="card p-4">Vulnerable: 8</div>
-        <div className="card p-4">Outdated: 23</div>
-        <div className="card p-4">License Types: 6</div>
+        {stats.map((s) => (
+          <div key={s.label} className="card p-4">
+            <p className="text-xs text-[var(--text-secondary)] flex items-center gap-2">
+              <s.icon size={14} style={{ color: s.color }} />
+              {s.label}
+            </p>
+            <p className="text-3xl font-semibold mt-2" style={{ color: s.color }}>{s.value}</p>
+          </div>
+        ))}
       </div>
-      <div className="flex gap-2">
-        {["Vulnerabilities", "All Packages", "Licenses", "Tree View"].map((t) => <button key={t} onClick={() => setTab(t)} className={`px-3 py-1.5 rounded-lg border ${tab === t ? "bg-blue-600 border-blue-500" : "border-[#1e2d4a]"}`}>{t}</button>)}
+
+      <div className="flex gap-2 flex-wrap">
+        {["Vulnerabilities", "All Packages", "Licenses", "SBOM Tree"].map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-3 py-1.5 rounded-md text-sm border transition-all ${tab === t ? "border-[var(--accent-green)] text-[var(--accent-green)] bg-[rgba(62,143,99,0.12)]" : "border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"}`}
+          >
+            {t}
+          </button>
+        ))}
       </div>
-      {tab === "Vulnerabilities" ? (
-        <div className="card p-4 overflow-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="text-left text-[#64748b]"><th className="p-2">Package</th><th>Current</th><th>Safe</th><th>CVE</th><th>Severity</th><th>CVSS</th><th>Fix</th></tr></thead>
-            <tbody>{rows.map((r) => <tr key={r[0]} className="border-t border-[#1e2d4a]"><td className="p-2">{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td>{r[3]}</td><td><SeverityBadge severity={r[4]} /></td><td>{r[5]}</td><td><button className="text-blue-400">Update</button></td></tr>)}</tbody>
-          </table>
+
+      {loading ? (
+        <div className="card p-8 text-center text-[var(--text-secondary)]">Loading scan results...</div>
+      ) : !data ? (
+        <div className="card p-10 text-center">
+          <Package className="mx-auto mb-3 text-[var(--accent-green)]" size={34} />
+          <p className="font-semibold mb-1">No dependency scan yet</p>
+          <p className="text-sm text-[var(--text-secondary)] mb-4">Run a scan to detect vulnerable dependencies and generate SBOM.</p>
+          <button className="primary-btn" onClick={runScan} disabled={scanning || !selected}>
+            {scanning ? "Scanning..." : "Run Scan Now"}
+          </button>
         </div>
-      ) : null}
-      {tab === "All Packages" ? <div className="card p-4"><input className="input w-full md:w-80 mb-3" placeholder="Search packages..." /><p className="text-sm text-[#64748b]">Showing all 142 packages</p></div> : null}
-      {tab === "Licenses" ? (
-        <div className="card p-4 grid md:grid-cols-2 gap-4">
-          <div className="h-64"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={licenses} dataKey="value" nameKey="name" innerRadius={60} outerRadius={90}>{licenses.map((l) => <Cell key={l.name} fill={l.color} />)}</Pie></PieChart></ResponsiveContainer></div>
-          <div className="space-y-2">{licenses.map((l) => <p key={l.name}>{l.name}: {l.value}</p>)}<div className="p-3 rounded-lg border border-yellow-500/50 bg-yellow-500/10 text-yellow-200 text-sm">2 GPL packages may require code disclosure</div></div>
-        </div>
-      ) : null}
-      {tab === "Tree View" ? <pre className="card p-4 text-sm overflow-auto">{`myapp@1.0.0
-├── express@4.18.2
-│   ├── body-parser@1.20.1
-│   ├── cors@2.8.5
-│   └── compression@1.7.4
-├── mongoose@7.0.0
-└── jsonwebtoken@9.0.0`}</pre> : null}
+      ) : (
+        <>
+          {tab === "Vulnerabilities" && (
+            <div className="card overflow-x-auto">
+              <table className="gh-table">
+                <thead>
+                  <tr>
+                    <th>Package</th>
+                    <th>Installed</th>
+                    <th>Fixed In</th>
+                    <th>CVE</th>
+                    <th>Severity</th>
+                    <th>CVSS</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {vulnerable.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="text-center text-[var(--text-secondary)] py-8">
+                        No vulnerabilities found
+                      </td>
+                    </tr>
+                  ) : (
+                    vulnerable.map((r, i) => (
+                      <tr key={`vuln-${i}`}>
+                        <td className="font-mono text-xs">{r.pkg_name}</td>
+                        <td>{r.pkg_version}</td>
+                        <td className="text-[var(--accent-green)]">{r.fixed_version || "—"}</td>
+                        <td className="font-mono text-xs">{r.cve_id || "—"}</td>
+                        <td><SeverityBadge severity={r.severity} /></td>
+                        <td>{r.cvss_score ?? "—"}</td>
+                        <td className="text-xs text-[var(--text-secondary)] max-w-xs truncate">{r.description || "—"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tab === "All Packages" && (
+            <div className="card overflow-x-auto">
+              <table className="gh-table">
+                <thead>
+                  <tr>
+                    <th>Package</th>
+                    <th>Version</th>
+                    <th>Type</th>
+                    <th>License</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.packages || []).map((p, i) => (
+                    <tr key={`pkg-${i}`}>
+                      <td className="font-mono text-xs">{p.pkg_name}</td>
+                      <td>{p.pkg_version}</td>
+                      <td className="text-[var(--text-secondary)]">{p.pkg_type}</td>
+                      <td className="text-[var(--text-secondary)]">{p.license || "Unknown"}</td>
+                      <td>
+                        {p.cve_id
+                          ? <span className="pill-badge border-[var(--accent-red)] text-[var(--accent-red)]">Vulnerable</span>
+                          : <span className="pill-badge border-[var(--accent-green)] text-[var(--accent-green)]">Safe</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tab === "Licenses" && (
+            <div className="card p-5 grid md:grid-cols-2 gap-6">
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={licenseData} dataKey="value" nameKey="name" innerRadius={60} outerRadius={90}>
+                      {licenseData.map((l) => <Cell key={l.name} fill={l.color} />)}
+                    </Pie>
+                    <Tooltip contentStyle={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-subtle)" }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="space-y-2">
+                {licenseData.map((l) => (
+                  <div key={l.name} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full" style={{ background: l.color }} />
+                      {l.name}
+                    </div>
+                    <span className="text-[var(--text-secondary)]">{l.value}</span>
+                  </div>
+                ))}
+                {licenseData.some((l) => l.name.toUpperCase().includes("GPL")) && (
+                  <div className="mt-4 p-3 rounded-md border border-[var(--accent-yellow)] bg-[rgba(200,155,60,0.10)] text-[var(--accent-yellow)] text-sm">
+                    GPL-licensed packages may require source disclosure.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === "SBOM Tree" && (
+            <div className="card p-5">
+              <p className="text-sm text-[var(--text-secondary)] mb-3">Software Bill of Materials — component tree</p>
+              <div className="overflow-x-auto">
+                <table className="gh-table text-xs">
+                  <thead>
+                    <tr>
+                      <th>Component</th>
+                      <th>Version</th>
+                      <th>Ecosystem</th>
+                      <th>License</th>
+                      <th>CVEs</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...new Map((data.packages || []).map((p) => [`${p.pkg_name}@${p.pkg_version}`, p])).values()].map((p, i) => (
+                      <tr key={`sbom-${i}`}>
+                        <td className="font-mono">{p.pkg_name}</td>
+                        <td>{p.pkg_version}</td>
+                        <td className="text-[var(--text-secondary)]">{p.pkg_type}</td>
+                        <td className="text-[var(--text-secondary)]">{p.license || "Unknown"}</td>
+                        <td>
+                          {(data.packages || []).filter((x) => x.pkg_name === p.pkg_name && x.cve_id).length || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

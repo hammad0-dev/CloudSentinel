@@ -121,7 +121,7 @@ export default function ComplianceDashboard() {
     <div className="space-y-6">
       <PageHeader
         title="Compliance Dashboard"
-        subtitle="OWASP Top 10 and CIS benchmark mapping from latest SAST findings"
+        subtitle="OWASP Top 10 and CIS benchmark mapping from combined SAST and dependency findings"
         actions={
           <div className="flex items-center gap-2">
             <select className="input min-w-64" value={selected} onChange={(e) => setSelected(e.target.value)}>
@@ -155,6 +155,9 @@ export default function ComplianceDashboard() {
         <p className="text-5xl font-bold">{data.summary.complianceScore}%</p>
         <p className="text-[var(--text-secondary)] mt-1">
           Compliance score • Failed controls: {data.summary.failedControls} • Unmapped findings: {data.summary.unmappedCount}
+        </p>
+        <p className="text-xs text-[var(--text-secondary)] mt-2">
+          Sources: SAST {data.summary.sastFindings ?? 0} + Dependencies {data.summary.dependencyFindings ?? 0}
         </p>
       </div>
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">

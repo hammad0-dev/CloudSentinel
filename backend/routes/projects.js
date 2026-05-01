@@ -244,13 +244,52 @@ router.get("/:id/scans", auth, async (req, res) => {
 });
 
 router.delete("/:id", auth, async (req, res) => {
+  const projectId = Number.parseInt(String(req.params.id ?? "").trim(), 10);
+  if (!Number.isInteger(projectId) || projectId < 1) {
+    return res.status(400).json({ error: "Invalid project id" });
+  }
+
+  const client = await pool.connect();
   try {
-    const exists = await pool.query("SELECT id FROM projects WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]);
-    if (!exists.rows.length) return res.status(404).json({ error: "Project not found" });
-    await pool.query("DELETE FROM projects WHERE id = $1", [req.params.id]);
+    const exists = await client.query(
+      "SELECT id FROM projects WHERE id = $1 AND user_id = $2",
+      [projectId, req.user.id]
+    );
+    if (!exists.rows.length) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    await client.query("BEGIN");
+    await client.query("DELETE FROM sbom_components WHERE project_id = $1", [projectId]);
+    await client.query("DELETE FROM dependency_scans WHERE project_id = $1", [projectId]);
+    await client.query("DELETE FROM scan_results WHERE project_id = $1", [projectId]);
+    await client.query("DELETE FROM scan_history WHERE project_id = $1", [projectId]);
+    const deleted = await client.query(
+      "DELETE FROM projects WHERE id = $1 AND user_id = $2 RETURNING id",
+      [projectId, req.user.id]
+    );
+    await client.query("COMMIT");
+
+    if (!deleted.rows.length) {
+      return res.status(404).json({ error: "Project not found" });
+    }
     return res.json({ success: true, message: "Project deleted successfully" });
   } catch (error) {
-    return res.status(500).json({ error: "Server error. Please try again." });
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {
+      /* ignore */
+    }
+    console.error("[projects DELETE]", error.code || "", error.message);
+    if (error.code === "23503") {
+      return res.status(409).json({
+        error:
+          "Could not delete project because related rows still reference it. Run DB migrations so project FKs use ON DELETE CASCADE, or retry.",
+      });
+    }
+    return res.status(500).json({ error: error.message || "Server error. Please try again." });
+  } finally {
+    client.release();
   }
 });
 
