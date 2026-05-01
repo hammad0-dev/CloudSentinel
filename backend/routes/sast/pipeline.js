@@ -386,8 +386,10 @@ function runSonarScannerAsync(projectId, cloneTarget, sonarHost, branchName) {
   const javaBinaries =
     envBin || (discoveredBin.length ? discoveredBin.join(",") : null);
 
+  /** Extra paths: IaC/K8s YAML under k8s/ often trips Sonar IAC/Kubernetes analyzers on CE (ContextException); Java SAST ignores them safely. Override via SAST_SONAR_EXCLUSIONS. */
   const exclusionsDefault =
-    "**/node_modules/**,**/.git/**,**/.gradle/caches/**,**/build/generated/**";
+    "**/node_modules/**,**/.git/**,**/.gradle/caches/**,**/build/generated/**," +
+    "**/k8s/**,**/kubernetes/**,**/deployment/k8s/**,**/helm/**,**/charts/**";
   const exclusions =
     process.env.SAST_SONAR_EXCLUSIONS?.trim() || exclusionsDefault;
   const args = [
