@@ -19,7 +19,6 @@ CREATE TABLE projects (
   database_tech VARCHAR(50),
   github_token TEXT,
   is_private BOOLEAN DEFAULT false,
-  security_score INTEGER DEFAULT 0,
   created_at TIMESTAMP DEFAULT NOW()
 );
 

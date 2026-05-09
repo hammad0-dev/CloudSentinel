@@ -91,9 +91,14 @@ function githubHttpsCloneUrl(repoUrl, token) {
 
 function resolveCloneUrl(project) {
   const raw = project.repo_url?.trim?.() || "";
-  const token =
-    (isUsableGithubToken(project.github_token) ? project.github_token.trim() : null) ||
-    (isUsableGithubToken(process.env.GITHUB_TOKEN) ? process.env.GITHUB_TOKEN.trim() : null);
+  const isPrivateRepo =
+    typeof project.is_private === "boolean"
+      ? project.is_private
+      : String(project.is_private || "").trim().toLowerCase() === "true";
+  const token = isPrivateRepo
+    ? (isUsableGithubToken(project.github_token) ? project.github_token.trim() : null)
+    : (isUsableGithubToken(project.github_token) ? project.github_token.trim() : null) ||
+      (isUsableGithubToken(process.env.GITHUB_TOKEN) ? process.env.GITHUB_TOKEN.trim() : null);
   if (/^https:\/\/(www\.)?github\.com\//i.test(raw) && token) return githubHttpsCloneUrl(raw, token);
   return raw;
 }

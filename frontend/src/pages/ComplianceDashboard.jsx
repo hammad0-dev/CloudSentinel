@@ -71,7 +71,6 @@ export default function ComplianceDashboard() {
         <p><strong>Name:</strong> ${report.project?.name || "-"}</p>
         <p><strong>Repository:</strong> ${report.project?.repo_url || "-"}</p>
         <p><strong>Language:</strong> ${report.project?.language || "Unknown"}</p>
-        <p><strong>Security Score:</strong> ${report.project?.security_score ?? "N/A"}/100</p>
       </div>
       <div class="card"><h2>Key Metrics</h2><div class="grid">
         <div class="kpi"><div class="muted">Issues</div><div>${report.totals?.issues ?? 0}</div></div>

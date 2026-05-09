@@ -48,6 +48,12 @@ const isUsableGithubToken = (token) => {
   return true;
 };
 
+const normalizeRepoPrivacy = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.trim().toLowerCase() === "true";
+  return Boolean(value);
+};
+
 const analyzeRepository = async (repoUrl, githubToken) => {
   const parsed = parseGithubUrl(repoUrl);
   if (!parsed) {
@@ -177,10 +183,16 @@ router.post("/", auth, async (req, res) => {
     const framework = analysis.stack.framework || null;
     const databaseTech = analysis.stack.database || null;
     const repoData = analysis.repoData;
+    const isPrivateRepo = normalizeRepoPrivacy(repoData?.private);
+    if (isPrivateRepo && !isUsableGithubToken(githubToken)) {
+      return res.status(400).json({
+        error: "Private repositories require a valid GitHub token when adding the project.",
+      });
+    }
 
     const insert = await pool.query(
       "INSERT INTO projects (user_id, name, repo_url, language, framework, database_tech, github_token, is_private) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
-      [req.user.id, name, repoUrl, language, framework, databaseTech, githubToken || null, repoData.private]
+      [req.user.id, name, repoUrl, language, framework, databaseTech, isUsableGithubToken(githubToken) ? githubToken.trim() : null, isPrivateRepo]
     );
 
     return res.status(201).json({
@@ -202,7 +214,7 @@ router.post("/", auth, async (req, res) => {
 router.get("/", auth, async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT id, name, repo_url, language, framework, database_tech, security_score, created_at FROM projects WHERE user_id = $1 ORDER BY created_at DESC",
+      "SELECT id, name, repo_url, language, framework, database_tech, created_at FROM projects WHERE user_id = $1 ORDER BY created_at DESC",
       [req.user.id]
     );
     const projects = await Promise.all(

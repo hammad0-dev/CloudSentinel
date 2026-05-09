@@ -1,5 +1,7 @@
 "use strict";
 
+const axios = require("axios");
+
 const severityOrder = { CRITICAL: 1, MAJOR: 2, HIGH: 2, MINOR: 3, LOW: 3, INFO: 4 };
 
 function sonarBaseUrl() {
@@ -89,6 +91,48 @@ function sonarAuthAxiosConfig(extra = {}) {
   };
 }
 
+/**
+ * GET /api/system/status before clone/build so misconfigured SONAR_HOST fails fast with a clear message
+ * instead of a long Java ConnectException from sonar-scanner.
+ */
+async function assertSonarReachable() {
+  const base = sonarBaseUrl();
+  const url = `${base}/api/system/status`;
+  const token = (process.env.SONAR_TOKEN || "").trim();
+  const req = token
+    ? sonarAuthAxiosConfig({ validateStatus: (s) => s < 500 })
+    : { timeout: SONAR_HTTP_TIMEOUT_MS, validateStatus: (s) => s < 500 };
+
+  try {
+    await axios.get(url, req);
+  } catch (e) {
+    const code = e?.code != null ? String(e.code) : "";
+    const syscall = e?.syscall != null ? String(e.syscall) : "";
+    const msg = typeof e.message === "string" ? e.message : "";
+    const isAxios = axios.isAxiosError(e);
+    const noResponse = isAxios && !e.response;
+    const looksNet =
+      noResponse &&
+      (code === "ECONNREFUSED" ||
+        code === "ENOTFOUND" ||
+        code === "ETIMEDOUT" ||
+        code === "EAI_AGAIN" ||
+        code === "EHOSTUNREACH" ||
+        code === "ENETUNREACH" ||
+        /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|connect|network|getaddrinfo|certificate/i.test(msg));
+    if (looksNet) {
+      throw new Error(
+        `Cannot reach SonarQube/SonarCloud at ${base} (${code || syscall || msg || "network error"}). ` +
+          `Start Sonar (e.g. Docker: docker run -d --name sonarqube -p 9000:9000 sonarqube:lts-community) ` +
+          `and set SONAR_HOST in backend .env to that URL (same machine: http://localhost:9000; ` +
+          `backend on Windows and Sonar on another host/VM: http://<that_host_LAN_IP>:9000). ` +
+          `Confirm the URL opens in a browser from this machine and port 9000 is allowed by the firewall.`
+      );
+    }
+    throw e;
+  }
+}
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const shouldKeepClone = () => /^true$/i.test((process.env.SAST_KEEP_CLONE || "").trim());
 const shouldUseSonarBranchAnalysis = () =>
@@ -97,6 +141,7 @@ const shouldUseSonarBranchAnalysis = () =>
 module.exports = {
   severityOrder,
   sonarBaseUrl,
+  assertSonarReachable,
   parseEnvTimeoutMs,
   GIT_CLONE_TIMEOUT_MS,
   MAVEN_TIMEOUT_MS,

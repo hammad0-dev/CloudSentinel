@@ -9,6 +9,11 @@ const router = express.Router();
 
 const TRIVY_CMD = process.env.TRIVY_CMD || "trivy";
 const CLONE_DIR = () => path.resolve(process.env.CLONE_DIR || "/tmp/cloudsentinel-scans");
+const hasUsableProjectToken = (token) =>
+  typeof token === "string" &&
+  token.trim() &&
+  !token.includes("your_github_pat_token_here") &&
+  !token.trim().startsWith("ghp_your_");
 
 function parseEnvMs(raw, fallback) {
   const n = Number.parseInt(String(raw ?? "").trim(), 10);
@@ -270,7 +275,32 @@ router.post("/scan/:projectId", auth, async (req, res) => {
     );
     if (!projectRes.rows.length) return res.status(404).json({ error: "Project not found" });
 
+    const [runningSastRes, runningDepRes] = await Promise.all([
+      pool.query(
+        "SELECT id FROM scan_history WHERE project_id = $1 AND scan_type = 'SAST' AND status = 'RUNNING' LIMIT 1",
+        [projectId]
+      ),
+      pool.query(
+        "SELECT id FROM dependency_scans WHERE project_id = $1 AND status = 'RUNNING' LIMIT 1",
+        [projectId]
+      ),
+    ]);
+    if (runningSastRes.rows.length || runningDepRes.rows.length) {
+      return res.status(409).json({
+        error: "A scan is already running for this project. Please wait for it to complete.",
+      });
+    }
+
     const project = projectRes.rows[0];
+    const isPrivateRepo =
+      typeof project.is_private === "boolean"
+        ? project.is_private
+        : String(project.is_private || "").trim().toLowerCase() === "true";
+    if (isPrivateRepo && !hasUsableProjectToken(project.github_token)) {
+      return res.status(400).json({
+        error: "Private repository scan requires a valid project GitHub token.",
+      });
+    }
 
     const runRow = await pool.query(
       "INSERT INTO dependency_scans (project_id, status, target_type, started_at) VALUES ($1, 'RUNNING', 'fs', NOW()) RETURNING id",
@@ -286,9 +316,9 @@ router.post("/scan/:projectId", auth, async (req, res) => {
     cloneTarget = fs.mkdtempSync(path.join(cloneRoot, `${projectId}-dep-`));
     const runDir = cloneTarget;
 
-    const token =
-      project.github_token?.trim() ||
-      (process.env.GITHUB_TOKEN?.trim() || null);
+    const token = isPrivateRepo
+      ? (hasUsableProjectToken(project.github_token) ? project.github_token.trim() : null)
+      : (project.github_token?.trim() || (process.env.GITHUB_TOKEN?.trim() || null));
     let cloneUrl = project.repo_url;
     if (token && /^https:\/\/(www\.)?github\.com\//i.test(cloneUrl)) {
       const u = new URL(cloneUrl);
@@ -447,7 +477,7 @@ router.get("/report/:projectId", auth, async (req, res) => {
   try {
     const { projectId } = req.params;
     const projectRes = await pool.query(
-      "SELECT id, name, repo_url, language, security_score FROM projects WHERE id = $1 AND user_id = $2",
+      "SELECT id, name, repo_url, language FROM projects WHERE id = $1 AND user_id = $2",
       [projectId, req.user.id]
     );
     if (!projectRes.rows.length) return res.status(404).json({ error: "Project not found" });

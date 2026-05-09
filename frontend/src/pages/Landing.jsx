@@ -66,8 +66,8 @@ export default function Landing() {
                 <p className="text-2xl font-semibold mt-1">89%</p>
               </div>
               <div className="bg-[var(--bg-tertiary)] border border-[var(--border-subtle)] rounded-lg p-3">
-                <p className="text-xs text-[var(--text-secondary)]">Avg Security Score</p>
-                <p className="text-2xl font-semibold mt-1">74/100</p>
+                <p className="text-xs text-[var(--text-secondary)]">Open Findings</p>
+                <p className="text-2xl font-semibold mt-1">74</p>
               </div>
             </div>
           </div>
@@ -109,7 +109,7 @@ export default function Landing() {
         <div className="grid md:grid-cols-3 gap-4">
           <div className="card p-6"><GitBranch className="text-[var(--accent-green)]" /><h3 className="font-bold mt-3">1. Connect Repository</h3><p className="text-sm text-[var(--text-secondary)] mt-2">Paste your GitHub URL and detect stack automatically.</p></div>
           <div className="card p-6"><Zap className="text-[var(--accent-yellow)]" /><h3 className="font-bold mt-3">2. Run Security Scans</h3><p className="text-sm text-[var(--text-secondary)] mt-2">Scan code, dependencies and infrastructure.</p></div>
-          <div className="card p-6"><Shield className="text-[var(--accent-red)]" /><h3 className="font-bold mt-3">3. Fix & Ship Securely</h3><p className="text-sm text-[var(--text-secondary)] mt-2">Track score and apply fix guidance fast.</p></div>
+          <div className="card p-6"><Shield className="text-[var(--accent-red)]" /><h3 className="font-bold mt-3">3. Fix & Ship Securely</h3><p className="text-sm text-[var(--text-secondary)] mt-2">Track findings and apply fix guidance fast.</p></div>
         </div>
       </section>
     </div>

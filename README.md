@@ -1,5 +1,305 @@
 # CloudSentinel
 
+CloudSentinel is a modular DevSecOps security platform for onboarding GitHub repositories, running SAST and dependency scans, generating SBOMs, and visualizing risk/compliance insights in a modern web dashboard.
+
+Break it. Scan it. Reproduce it. Benchmark against it. Improve it.
+
+---
+
+## What Makes It Different
+
+Unlike static demo dashboards, CloudSentinel is built as a testable security workflow:
+
+- Real scan execution (`git clone` + build + scanner), not fake sample rows.
+- Deterministic scan lifecycle tracking (`RUNNING -> COMPLETED / FAILED`).
+- Combined compliance view from both SAST findings and dependency CVEs.
+- SBOM-backed dependency visibility with exportable reports.
+- Modular architecture so frontend, backend, SAST, and dependency modules can evolve independently.
+
+---
+
+## What We Have Implemented
+
+### Frontend
+
+- React + Vite application with protected routes and JWT session flow.
+- Auth screens: login, register, forgot password, reset password.
+- Project management UI: add/list/view/delete repositories.
+- SAST results view with findings + Sonar metrics.
+- Dependency dashboard with vulnerabilities, package inventory, license summary, and SBOM export access.
+- Compliance dashboard combining SAST + dependency findings.
+
+### Backend
+
+- Node.js + Express API with PostgreSQL persistence.
+- JWT authentication, user profile endpoints, password reset flow.
+- Project onboarding and scan history APIs.
+- Health endpoints (`/health`, `/api/health`) and boot-time stale scan cleanup.
+
+### SAST Module
+
+- Real SonarQube pipeline:
+  - clone repository with non-interactive Git auth support,
+  - detect/build Java (Maven) and Gradle layouts when needed,
+  - run `sonar-scanner`,
+  - ingest Sonar issues into `scan_results`,
+  - compute and persist security score.
+- Scan orchestration persisted in `scan_history` with single-row status transitions.
+- Sonar metric retrieval for reporting and dashboard cards.
+
+### Dependency + SBOM Module
+
+- Real Trivy-based dependency scanning (`trivy fs`).
+- CycloneDX SBOM generation and download endpoint.
+- Results persisted in:
+  - `dependency_scans` (run metadata + severity totals),
+  - `sbom_components` (packages, versions, CVEs, severities, licenses, fix versions).
+- Dependency report API for frontend export and analytics.
+
+### Compliance Mapping
+
+- OWASP and CIS mapping built from SAST findings.
+- Dependency findings merged into compliance controls.
+- Unified compliance score + control coverage summary.
+
+---
+
+## Architecture
+
+| Layer | Main Tech | Purpose |
+|---|---|---|
+| Frontend | React, Vite, Tailwind, Recharts | Dashboards, project/scan UX, exports |
+| Backend | Node.js, Express | Auth, project APIs, scan orchestration, reports |
+| Database | PostgreSQL | Users, projects, scans, findings, SBOM components |
+| SAST Engine | SonarQube + Sonar Scanner | Static analysis and code metrics |
+| Dependency Engine | Trivy | Dependency CVEs, package inventory, SBOM |
+
+---
+
+## Repository Layout
+
+```text
+cloudsentinel/
+├── frontend/
+│   ├── src/
+│   │   ├── pages/
+│   │   ├── components/
+│   │   ├── context/
+│   │   └── lib/
+│   └── .env.example
+├── backend/
+│   ├── routes/
+│   │   ├── auth.js
+│   │   ├── projects.js
+│   │   ├── dependency.js
+│   │   └── sast/              # index.js, pipeline.js, config.js, compliance.js, metrics.js
+│   ├── middleware/
+│   ├── server.js
+│   ├── db.js
+│   ├── .env.windows.example
+│   └── .env.ubuntu.example
+├── schema.sql
+└── README.md
+```
+
+---
+
+## Running The Project
+
+You can run CloudSentinel in local split mode (frontend and backend on same or different hosts).
+
+### Prerequisites
+
+- Node.js 18+
+- PostgreSQL 15+
+- Git CLI
+- SonarQube server
+- Sonar Scanner CLI
+- Trivy
+- (For Java repos) JDK 17+
+
+### 1) Install Dependencies
+
+From project root:
+
+```bash
+npm install
+```
+
+### 2) Configure Environment
+
+Backend (`backend/.env`):
+
+- `PORT=3000`
+- `JWT_SECRET=...`
+- `SONAR_HOST=http://<sonar-host>:9000`
+- `SONAR_TOKEN=<real_sonar_token>`
+- `CLONE_DIR=<absolute_path>`
+- `DATABASE_URL=postgresql://...` (or `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`)
+- Optional: `GITHUB_TOKEN`, `SAST_KEEP_CLONE`, `SONAR_ENABLE_BRANCH_ANALYSIS`, `TRIVY_CMD`
+
+Frontend (`frontend/.env`):
+
+- `VITE_API_BASE_URL=http://<backend-host>:3000/api`
+- `VITE_GOOGLE_CLIENT_ID=<optional>`
+
+### 3) Setup Database
+
+```sql
+CREATE DATABASE cloudsentinel;
+CREATE USER csuser WITH PASSWORD 'your_password';
+GRANT ALL PRIVILEGES ON DATABASE cloudsentinel TO csuser;
+```
+
+Apply schema:
+
+```bash
+psql -U postgres -d cloudsentinel -f schema.sql
+```
+
+### 4) Start Services
+
+Run both frontend + backend:
+
+```bash
+npm run dev
+```
+
+Or run separately:
+
+```bash
+cd backend && npm run dev
+cd frontend && npm run dev
+```
+
+### 5) Open Application
+
+- Frontend: `http://localhost:5173`
+- API health: `http://localhost:3000/api/health`
+
+---
+
+## Core API Modules
+
+Base prefix: `/api`
+
+### Auth
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `GET /auth/me`
+- `PATCH /auth/profile`
+- `POST /auth/forgot-password`
+- `POST /auth/reset-password`
+
+### Projects
+
+- `POST /projects/analyze`
+- `POST /projects`
+- `GET /projects`
+- `GET /projects/:id`
+- `GET /projects/:id/scans`
+- `DELETE /projects/:id`
+
+### SAST
+
+- `POST /sast/scan/:projectId`
+- `GET /sast/:projectId`
+- `GET /sast/compliance/:projectId`
+- `GET /sast/report/:projectId`
+- `GET /sast/analytics/overview`
+
+### Dependencies & SBOM
+
+- `POST /dependencies/scan/:projectId`
+- `GET /dependencies/:projectId`
+- `GET /dependencies/report/:projectId`
+- `GET /dependencies/sbom/:projectId`
+
+---
+
+## Scan Pipeline Behavior
+
+### SAST
+
+1. Insert `scan_history` row as `RUNNING`.
+2. Clone repository into `CLONE_DIR`.
+3. Build Java/Gradle projects when needed.
+4. Execute `sonar-scanner`.
+5. Fetch Sonar issues + metrics.
+6. Replace `scan_results`.
+7. Update security score and mark scan `COMPLETED` (or `FAILED` on error).
+
+### Dependency + SBOM
+
+1. Insert `dependency_scans` row as `RUNNING`.
+2. Clone repository into temporary scan directory.
+3. Run `trivy fs` for vulnerability + license data.
+4. Generate CycloneDX SBOM.
+5. Persist `sbom_components` + scan summary.
+6. Mark dependency scan `COMPLETED` (or `FAILED` on error).
+
+---
+
+## Benchmarking and Reproducibility
+
+CloudSentinel is designed for repeatable security testing workflows:
+
+- Re-run scans on the same repository and compare severity trends.
+- Validate scanner behavior against known vulnerable targets.
+- Use saved scan history for security regression checks across changes.
+- Export SAST/dependency report payloads and SBOM artifacts for audit evidence.
+
+---
+
+## Technologies Used
+
+- JavaScript / TypeScript
+- React + Vite
+- Node.js + Express
+- PostgreSQL
+- SonarQube + Sonar Scanner
+- Trivy
+- JWT Authentication
+
+---
+
+## Troubleshooting Quick Notes
+
+- `Cannot find module 'express'`: run `npm install` in root or backend.
+- Sonar unauthorized: verify `SONAR_TOKEN`.
+- Sonar zero LOC: check repository URL/branch and scan host plugin setup.
+- Git clone auth prompt/hang: configure valid `GITHUB_TOKEN` or project PAT.
+- Dependency scan too slow/timeouts: adjust `DEP_TRIVY_TIMEOUT_MS` and ensure Trivy DB is up to date.
+- Java scanning issues: ensure JDK 17+ is available on scan host.
+
+---
+
+## Security Notes
+
+- Never commit `.env` files or real secrets.
+- Rotate tokens/passwords if exposed.
+- Use least-privilege credentials.
+- Use HTTPS and production-grade secret management for deployment.
+
+---
+
+## Contributing
+
+PRs are welcome.
+
+Ways to contribute:
+
+- Add new vulnerability mapping logic.
+- Improve scanner orchestration and reliability.
+- Enhance frontend reporting and analytics UX.
+- Expand dependency/SBOM insights and compliance coverage.
+
+---
+
+CloudSentinel is built for automation, reproducibility, and continuous security improvement across frontend, backend, SAST, dependency, and SBOM workflows.
+# CloudSentinel
+
 CloudSentinel is a full-stack DevSecOps platform for registering GitHub repositories, running SAST scans with SonarQube, storing findings in PostgreSQL, and visualizing security/compliance analytics in a React frontend.
 
 ---
@@ -246,9 +546,15 @@ Base prefix: `/api`
 5. Validate Sonar indexed code (`ncloc` + `files` > 0).
 6. Pull issues from Sonar API.
 7. Replace `scan_results` rows for the project.
-8. Update scan summary and `projects.security_score`.
+8. Update scan summary in `scan_history`.
 9. Mark scan `COMPLETED` or `FAILED`.
 10. Cleanup clone dir unless `SAST_KEEP_CLONE=true`.
+
+---
+
+## Severity Summary
+
+Latest completed scan severity counts are stored in `scan_history` (`critical`, `high`, `medium`, `low`) and used by dashboards/reports.
 
 ---
 
@@ -499,7 +805,7 @@ These are the concrete fixes so you remember **why** the code looks the way it d
 | **Sonar “Not authorized”** / token shown as **`PASTE_SONAR_USER_TOKEN`** | **`SONAR_TOKEN`** in **`.env`** left as template text | Set a **real** Sonar user token from Sonar UI (**My Account → Security → Tokens**) |
 | **`scan_results` empty** + **`Invalid token`** with curl | Used literal **`YOUR_JWT`** / wrong project id; or scan never completed | Use JWT from **`POST /api/auth/login`** or browser **`localStorage`**; use numeric **`project_id`** in **`/api/sast/:id`** |
 | **Sonar UI: “The main branch has no lines of code”** while **GitHub `main` has files** | Wrong repo registered, clone empty, wrong branch, or Sonar branch/plugin mismatch | Verify **registered URL** matches repo; **`GIT_CLONE_BRANCH`**; inspect **`/tmp/cloudsentinel-scans/<id>`**; Sonar **Python** plugin; **`sonar.branch.name`** aligned with checked-out branch (see [dedicated section](#sonarqube-no-lines-of-code--branch-mismatch)) |
-| UI shows **Scanning** but **Security Score 100** | Latest row **`RUNNING`** while score still reflects **previous** **`COMPLETED`** run | Expected until current scan finishes; refresh after scan completes |
+| UI shows **Scanning** but still old summary | Latest row **`RUNNING`** while counts still reflect the previous **`COMPLETED`** run | Expected until current scan finishes; refresh after scan completes |
 | **`Invalid email or password`** after DB “works” | User exists only on **other** machine’s database | **`VITE_API_BASE_URL`** must point to the backend whose Postgres you registered against |
 | **`password authentication failed for user "csuser"`** on Windows | **`.env`** copied from Ubuntu | Windows **`DATABASE_URL`** with local **`postgres`** user/password (see **`.env.windows.example`**) |
 | **`SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string`** | **`DATABASE_URL`** has no password segment (e.g. `postgresql://csuser@localhost/db`) or **`DB_PASSWORD`** missing / not a string after dotenv | Use **`DB_PASSWORD=yourpassword`** with **`DB_*`**, or **`DATABASE_URL=postgresql://user:password@host:5432/dbname`** (URL‑encode special chars in the password). **`backend/db.js`** coerces an empty password to **`""`**. |
@@ -651,19 +957,20 @@ Never copy **`node_modules`** from Windows to Linux (or vice versa). Native modu
 ## SAST pipeline (step-by-step)
 
 1. Client calls **`POST /api/sast/scan/:projectId`** with **`Authorization: Bearer <jwt>`**.
-2. Insert **`scan_history`** row: **`RUNNING`**, capture **`id`** (`scanHistoryId`).
-3. mkdir **`CLONE_DIR`**, delete previous **`CLONE_DIR/<projectId>`** if present.
-4. Build authenticated clone URL for **github.com** when **`GITHUB_TOKEN`** or **`projects.github_token`** is usable (**`x-access-token`** format).
-5. **`git clone`** — default **`--depth 1`** ( **`SAST_SHALLOW_CLONE=false`** for full history). Optional **`GIT_CLONE_BRANCH`** → **`git clone -b <branch> --single-branch`**.
-6. If **`pom.xml`** exists: Maven **`clean package`** with **`-DskipTests`** plus **`SAST_MAVEN_PARALLEL`** (default **`-T 1C`** for faster multi-module builds like **WebGoat**; set **`SAST_MAVEN_PARALLEL=`** empty to disable).
-7. Detect branch: **`git rev-parse --abbrev-ref HEAD`** in clone dir; pass **`-Dsonar.branch.name=...`** only when **`SONAR_ENABLE_BRANCH_ANALYSIS=true`**.
-8. Run **`sonar-scanner`** with **`sonar.java.binaries`** set to **discovered comma-separated paths** (each existing **`…/target/classes`** and Gradle **`…/build/classes/java/main`** etc.) — not a glob — and **`sonar.exclusions`** excluding **`node_modules`**, **`.git`**, **`.gradle/caches`**, **`build/generated`** (not all of **`build/`**). Overrides: **`SAST_SONAR_EXCLUSIONS`**, **`SAST_SONAR_JAVA_BINARIES`**. Scanner timeout: **`SAST_SONAR_SCAN_TIMEOUT_MS`**.
-9. Poll Sonar **`/api/measures/component`** (**`ncloc`**, **`files`**) until both are non-zero or **`SAST_SONAR_INDEX_MAX_WAIT_MS`** elapses (**`SAST_SONAR_INDEX_POLL_MS`** between tries); fail clearly if indexing never succeeds.
-10. Validate metrics; **`git clone`** / Maven also have timeouts (**`SAST_GIT_TIMEOUT_MS`**, **`SAST_MAVEN_TIMEOUT_MS`**). Sonar HTTP calls use **`SAST_SONAR_HTTP_TIMEOUT_MS`**.
-11. **`GET <SONAR_HOST>/api/issues/search?projectKeys=cloudsentinel_<projectId>`** with token auth.
-12. Replace **`scan_results`** for that project; **`UPDATE scan_history`** row **`scanHistoryId`** → **`COMPLETED`** + counts; **`UPDATE projects.security_score`**.
-13. Delete clone dir unless **`SAST_KEEP_CLONE=true`**.
-14. On any thrown error: **`UPDATE scan_history`** → **`FAILED`** for **`scanHistoryId`**; return **500** JSON **`{ error: "<message>" }`**.
+2. Pre-check: if a SAST or dependency scan for the same project is already **`RUNNING`**, return **`409 Conflict`**.
+3. Insert **`scan_history`** row: **`RUNNING`**, capture **`id`** (`scanHistoryId`).
+4. mkdir **`CLONE_DIR`**, delete previous **`CLONE_DIR/<projectId>`** if present.
+5. Build authenticated clone URL for **github.com** when **`GITHUB_TOKEN`** or **`projects.github_token`** is usable (**`x-access-token`** format).
+6. **`git clone`** — default **`--depth 1`** ( **`SAST_SHALLOW_CLONE=false`** for full history). Optional **`GIT_CLONE_BRANCH`** → **`git clone -b <branch> --single-branch`**.
+7. If **`pom.xml`** exists: Maven **`clean package`** with **`-DskipTests`** plus **`SAST_MAVEN_PARALLEL`** (default **`-T 1C`** for faster multi-module builds like **WebGoat**; set **`SAST_MAVEN_PARALLEL=`** empty to disable).
+8. Detect branch: **`git rev-parse --abbrev-ref HEAD`** in clone dir; pass **`-Dsonar.branch.name=...`** only when **`SONAR_ENABLE_BRANCH_ANALYSIS=true`**.
+9. Run **`sonar-scanner`** with **`sonar.java.binaries`** set to **discovered comma-separated paths** (each existing **`…/target/classes`** and Gradle **`…/build/classes/java/main`** etc.) — not a glob — and **`sonar.exclusions`** excluding **`node_modules`**, **`.git`**, **`.gradle/caches`**, **`build/generated`** (not all of **`build/`**). Overrides: **`SAST_SONAR_EXCLUSIONS`**, **`SAST_SONAR_JAVA_BINARIES`**. Scanner timeout: **`SAST_SONAR_SCAN_TIMEOUT_MS`**.
+10. Poll Sonar **`/api/measures/component`** (**`ncloc`**, **`files`**) until both are non-zero or **`SAST_SONAR_INDEX_MAX_WAIT_MS`** elapses (**`SAST_SONAR_INDEX_POLL_MS`** between tries); fail clearly if indexing never succeeds.
+11. Validate metrics; **`git clone`** / Maven also have timeouts (**`SAST_GIT_TIMEOUT_MS`**, **`SAST_MAVEN_TIMEOUT_MS`**). Sonar HTTP calls use **`SAST_SONAR_HTTP_TIMEOUT_MS`**.
+12. **`GET <SONAR_HOST>/api/issues/search?projectKeys=cloudsentinel_<projectId>`** with token auth.
+13. Replace **`scan_results`** for that project; **`UPDATE scan_history`** row **`scanHistoryId`** → **`COMPLETED`** + counts.
+14. Delete clone dir unless **`SAST_KEEP_CLONE=true`**.
+15. On any thrown error: **`UPDATE scan_history`** → **`FAILED`** for **`scanHistoryId`**; return **500** JSON **`{ error: "<message>" }`**.
 
 **Why WebGoat (or OWASP Java) feels slower than a small JS repo:** the pipeline builds a **full Maven multi-module reactor** and Sonar analyzes **many Java compilation units**. A minimal React/Node demo has far less bytecode and fewer files — that difference is normal. Defaults (**shallow clone**, **`SAST_MAVEN_PARALLEL=-T 1C`**, Sonar **exclusions**) shrink wall time but will not match a tiny project.
 
@@ -702,8 +1009,8 @@ It does **not** always mean GitHub **`main`** is empty. Common cases:
 
 | Location | What you see |
 |----------|----------------|
-| **CloudSentinel UI** | **Projects → View project** → Scan history + score; **`/projects/:id/sast`** → issue table + Sonar metric cards + charts |
-| **PostgreSQL** | **`scan_results`** (issues), **`scan_history`** (runs), **`projects.security_score`** |
+| **CloudSentinel UI** | **Projects → View project** → Scan history; **`/projects/:id/sast`** → issue table + Sonar metric cards + charts |
+| **PostgreSQL** | **`scan_results`** (issues), **`scan_history`** (runs) |
 | **SonarQube Web** | **`http://<sonar-host>:9000`** → project key **`cloudsentinel_<numeric_project_id>`** |
 | **Disk** | Clone under **`CLONE_DIR/<projectId>`** — deleted after a successful/failed scan path cleanup |
 
@@ -741,7 +1048,7 @@ Prefix: **`/api`** (included in **`VITE_API_BASE_URL`**).
 
 | Method | Path | Notes |
 |--------|------|--------|
-| POST | `/api/sast/scan/:projectId` | Run scan (Bearer); long-running |
+| POST | `/api/sast/scan/:projectId` | Run scan (Bearer); long-running; returns **409** if another scan is RUNNING for that project |
 | GET | `/api/sast/:projectId` | Issues + summary + `sonarMetrics` (bugs, vulnerabilities, hotspots, codeSmells, coverage, duplications, ncloc) |
 | GET | `/api/sast/compliance/:projectId` | Combined compliance mapping (SAST + dependencies) |
 | GET | `/api/sast/report/:projectId` | Full SAST/compliance report payload |
@@ -751,7 +1058,7 @@ Prefix: **`/api`** (included in **`VITE_API_BASE_URL`**).
 
 | Method | Path | Notes |
 |--------|------|--------|
-| POST | `/api/dependencies/scan/:projectId` | Run Trivy dependency scan (Bearer); long-running |
+| POST | `/api/dependencies/scan/:projectId` | Run Trivy dependency scan (Bearer); long-running; returns **409** if another scan is RUNNING for that project |
 | GET | `/api/dependencies/:projectId` | Latest dependency scan + packages + vulnerable rows + license summary |
 | GET | `/api/dependencies/sbom/:projectId` | Download latest CycloneDX SBOM |
 | GET | `/api/dependencies/report/:projectId` | Dependency report payload used for HTML export |

@@ -238,7 +238,6 @@ export default function SASTResults() {
                         <pre className="bg-[#111827] border border-[#1e2d4a] rounded p-2 overflow-auto">{`// Bad code example\nconst query = "SELECT * FROM users WHERE id=" + id;`}</pre>
                         <pre className="bg-[#111827] border border-[#1e2d4a] rounded p-2 overflow-auto">{`// Good code example\nconst query = "SELECT * FROM users WHERE id = $1";`}</pre>
                       </div>
-                      <div className="mt-3 flex gap-2"><button className="px-3 py-1.5 rounded border border-[#1e2d4a]">Mark as Fixed</button><button className="px-3 py-1.5 rounded border border-[#1e2d4a]">View in SonarQube</button></div>
                     </td>
                   </tr>
                 ) : null}

@@ -60,10 +60,6 @@ export default function Dashboard() {
     return () => clearInterval(t);
   }, []);
 
-  const avgScore = useMemo(
-    () => (projects.length ? Math.round(projects.reduce((a, p) => a + (p.security_score || 0), 0) / projects.length) : 74),
-    [projects]
-  );
   const totalScans = useMemo(
     () => projects.reduce((acc, p) => acc + (Number(p.latestScan?.id ? 1 : 0) || 0), 0),
     [projects]
@@ -81,16 +77,24 @@ export default function Dashboard() {
     [projects]
   );
 
-  const scoreColor = avgScore >= 80 ? "var(--accent-green)" : avgScore >= 60 ? "var(--accent-yellow)" : "var(--accent-red)";
-  const grade = avgScore >= 90 ? "A" : avgScore >= 80 ? "B" : avgScore >= 70 ? "C" : avgScore >= 60 ? "D" : "F";
-  const statusMessage = avgScore >= 80 ? "Security posture is stable" : avgScore >= 60 ? "Needs focused hardening" : "Immediate remediation required";
-  const gaugeData = [{ name: "score", value: avgScore, fill: scoreColor }];
-  const progressWidth = `${Math.max(4, avgScore)}%`;
-
   const lowCount = useMemo(
     () => projects.reduce((acc, p) => acc + (Number(p.latestScan?.low) || 0), 0),
     [projects]
   );
+  const totalFindings = useMemo(
+    () => criticalCount + highCount + mediumCount + lowCount,
+    [criticalCount, highCount, mediumCount, lowCount]
+  );
+  const findingsColor =
+    criticalCount > 0 ? "var(--accent-red)" : highCount > 0 ? "var(--accent-yellow)" : "var(--accent-green)";
+  const statusMessage =
+    criticalCount > 0
+      ? "Critical findings require immediate remediation"
+      : highCount > 0
+        ? "High severity findings need focused hardening"
+        : "No critical or high findings in latest scans";
+  const gaugeData = [{ name: "findings", value: totalFindings, fill: findingsColor }];
+  const progressWidth = `${Math.min(100, Math.max(4, totalFindings))}%`;
   const vulnTypes = useMemo(
     () => [
       { name: "Critical", value: criticalCount },
@@ -124,8 +128,9 @@ export default function Dashboard() {
   ];
 
   const projectRows = projects.slice(0, 6).map((p) => {
-    const score = Number(p.security_score || 0);
-    const state = score >= 80 ? "Secure" : score >= 60 ? "At Risk" : "Critical";
+    const critical = Number(p.latestScan?.critical || 0);
+    const high = Number(p.latestScan?.high || 0);
+    const state = critical > 0 ? "Critical" : high > 0 ? "At Risk" : "Secure";
     const stateClass =
       state === "Secure"
         ? "border-[var(--accent-green)] text-[var(--accent-green)]"
@@ -136,9 +141,8 @@ export default function Dashboard() {
       id: p.id,
       name: p.name,
       language: p.language || "Unknown",
-      score,
-      critical: Number(p.latestScan?.critical || 0),
-      high: Number(p.latestScan?.high || 0),
+      critical,
+      high,
       lastScan: p.latestScan?.completed_at ? new Date(p.latestScan.completed_at).toLocaleString() : "Never",
       state,
       stateClass,
@@ -186,21 +190,21 @@ export default function Dashboard() {
               >
                 <RadialBar dataKey="value" cornerRadius={8} />
                 <text x="50%" y="46%" textAnchor="middle" fill="var(--text-primary)" style={{ fontSize: "32px", fontWeight: 700 }}>
-                  {avgScore}
+                  {totalFindings}
                 </text>
                 <text x="50%" y="58%" textAnchor="middle" fill="var(--text-secondary)" style={{ fontSize: "12px" }}>
-                  /100
+                  findings
                 </text>
               </RadialBarChart>
             </ResponsiveContainer>
           </div>
           <div>
-            <p className="text-[42px] font-semibold leading-none">{grade}</p>
+            <p className="text-[42px] font-semibold leading-none">{totalFindings}</p>
             <p className="text-[var(--text-secondary)] mt-1">{statusMessage}</p>
             <div className="mt-4 h-2 rounded bg-[var(--bg-tertiary)] border border-[var(--border-subtle)] overflow-hidden">
-              <div className="h-full progress-anim" style={{ width: progressWidth, background: scoreColor }} />
+              <div className="h-full progress-anim" style={{ width: progressWidth, background: findingsColor }} />
             </div>
-            <p className="text-xs text-[var(--text-secondary)] mt-2">{user?.fullName || "Developer"} • organization security grade</p>
+            <p className="text-xs text-[var(--text-secondary)] mt-2">{user?.fullName || "Developer"} • open finding trend snapshot</p>
           </div>
           <div className="space-y-4">
             <div className="flex items-center justify-between text-sm">
@@ -295,7 +299,6 @@ export default function Dashboard() {
             <tr>
               <th>Project</th>
               <th>Language</th>
-              <th>Score</th>
               <th>Critical</th>
               <th>High</th>
               <th>Last Scan</th>
@@ -306,7 +309,7 @@ export default function Dashboard() {
           <tbody>
             {projectRows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-center text-[var(--text-secondary)] py-8">
+                <td colSpan={7} className="text-center text-[var(--text-secondary)] py-8">
                   No projects yet. Add your first project to start scanning.
                 </td>
               </tr>
@@ -315,7 +318,6 @@ export default function Dashboard() {
                 <tr key={r.id}>
                   <td>{r.name}</td>
                   <td className="text-[var(--text-secondary)]">{r.language}</td>
-                  <td style={{ color: r.score >= 80 ? "var(--accent-green)" : r.score >= 60 ? "var(--accent-yellow)" : "var(--accent-red)" }}>{r.score}</td>
                   <td>{r.critical}</td>
                   <td>{r.high}</td>
                   <td className="text-[var(--text-secondary)]">{r.lastScan}</td>

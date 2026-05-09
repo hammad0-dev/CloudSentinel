@@ -9,6 +9,7 @@ const auth = require("../../middleware/auth");
 const {
   severityOrder,
   sonarBaseUrl,
+  assertSonarReachable,
   sonarAuthAxiosConfig,
   SONAR_INDEX_MAX_WAIT_MS,
   SONAR_INDEX_POLL_MS,
@@ -39,6 +40,11 @@ const {
 const { fetchSonarMetrics } = require("./metrics");
 
 const router = express.Router();
+const hasUsableProjectToken = (token) =>
+  typeof token === "string" &&
+  token.trim() &&
+  !token.includes("your_github_pat_token_here") &&
+  !token.trim().startsWith("ghp_your_");
 
 router.post("/scan/:projectId", auth, async (req, res) => {
   const rawParam = req.params.projectId;
@@ -54,7 +60,32 @@ router.post("/scan/:projectId", auth, async (req, res) => {
     const projectRes = await pool.query("SELECT * FROM projects WHERE id = $1 AND user_id = $2", [pid, req.user.id]);
     if (!projectRes.rows.length) return res.status(404).json({ error: "Project not found" });
 
+    const [runningSastRes, runningDepRes] = await Promise.all([
+      pool.query(
+        "SELECT id FROM scan_history WHERE project_id = $1 AND scan_type = 'SAST' AND status = 'RUNNING' LIMIT 1",
+        [pid]
+      ),
+      pool.query(
+        "SELECT id FROM dependency_scans WHERE project_id = $1 AND status = 'RUNNING' LIMIT 1",
+        [pid]
+      ),
+    ]);
+    if (runningSastRes.rows.length || runningDepRes.rows.length) {
+      return res.status(409).json({
+        error: "A scan is already running for this project. Please wait for it to complete.",
+      });
+    }
+
     const project = projectRes.rows[0];
+    const isPrivateRepo =
+      typeof project.is_private === "boolean"
+        ? project.is_private
+        : String(project.is_private || "").trim().toLowerCase() === "true";
+    if (isPrivateRepo && !hasUsableProjectToken(project.github_token)) {
+      return res.status(400).json({
+        error: "Private repository scan requires a valid project GitHub token.",
+      });
+    }
     const cloneUrl = resolveCloneUrl(project);
     if (!String(cloneUrl || "").trim()) {
       return res.status(400).json({ error: "Project has no repository URL configured" });
@@ -68,6 +99,8 @@ router.post("/scan/:projectId", auth, async (req, res) => {
 
     if (!fs.existsSync(cloneRoot)) fs.mkdirSync(cloneRoot, { recursive: true });
     if (fs.existsSync(cloneTarget)) fs.rmSync(cloneTarget, { recursive: true, force: true });
+
+    await assertSonarReachable();
 
     const t0 = Date.now();
     const phase = (label) =>
@@ -189,11 +222,6 @@ router.post("/scan/:projectId", auth, async (req, res) => {
       { critical: 0, high: 0, medium: 0, low: 0, total: 0 }
     );
 
-    const score = Math.max(
-      0,
-      100 - summary.critical * 15 - summary.high * 8 - summary.medium * 3 - summary.low
-    );
-
     await pool.query(
       `UPDATE scan_history SET
         status = 'COMPLETED',
@@ -206,7 +234,6 @@ router.post("/scan/:projectId", auth, async (req, res) => {
       WHERE id = $6`,
       [summary.total, summary.critical, summary.high, summary.medium, summary.low, scanHistoryId]
     );
-    await pool.query("UPDATE projects SET security_score = $1 WHERE id = $2", [score, pid]);
 
     if (!shouldKeepClone() && fs.existsSync(cloneTarget)) {
       fs.rmSync(cloneTarget, { recursive: true, force: true });
@@ -240,7 +267,7 @@ router.post("/scan/:projectId", auth, async (req, res) => {
 router.get("/compliance/:projectId", auth, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const projectRes = await pool.query("SELECT id, name, security_score FROM projects WHERE id = $1 AND user_id = $2", [
+    const projectRes = await pool.query("SELECT id, name FROM projects WHERE id = $1 AND user_id = $2", [
       projectId,
       req.user.id,
     ]);
@@ -293,7 +320,7 @@ router.get("/report/:projectId", auth, async (req, res) => {
   try {
     const { projectId } = req.params;
     const projectRes = await pool.query(
-      "SELECT id, name, repo_url, language, framework, security_score, created_at FROM projects WHERE id = $1 AND user_id = $2",
+      "SELECT id, name, repo_url, language, framework, created_at FROM projects WHERE id = $1 AND user_id = $2",
       [projectId, req.user.id]
     );
     if (!projectRes.rows.length) return res.status(404).json({ error: "Project not found" });
@@ -354,13 +381,13 @@ router.get("/report/:projectId", auth, async (req, res) => {
 router.get("/analytics/overview", auth, async (req, res) => {
   try {
     const projectsRes = await pool.query(
-      "SELECT id, name, language, security_score, created_at FROM projects WHERE user_id = $1 ORDER BY created_at DESC",
+      "SELECT id, name, language, created_at FROM projects WHERE user_id = $1 ORDER BY created_at DESC",
       [req.user.id]
     );
     const projects = projectsRes.rows;
     if (!projects.length) {
       return res.json({
-        totals: { projects: 0, critical: 0, high: 0, medium: 0, low: 0, avgScore: 0 },
+        totals: { projects: 0, critical: 0, high: 0, medium: 0, low: 0 },
         trend: [],
         topProjects: [],
       });
@@ -392,16 +419,20 @@ router.get("/analytics/overview", auth, async (req, res) => {
       low += Number(s.low || 0);
     });
 
-    const avgScore = Math.round(
-      projects.reduce((a, p) => a + Number(p.security_score || 0), 0) / Math.max(1, projects.length)
-    );
     const topProjects = projects
       .map((p) => ({ ...p, latest: latestByProject.get(p.id) || null }))
-      .sort((a, b) => Number(b.security_score || 0) - Number(a.security_score || 0))
+      .sort((a, b) => {
+        const ac = Number(a.latest?.critical || 0);
+        const bc = Number(b.latest?.critical || 0);
+        if (bc !== ac) return bc - ac;
+        const ah = Number(a.latest?.high || 0);
+        const bh = Number(b.latest?.high || 0);
+        return bh - ah;
+      })
       .slice(0, 8);
 
     return res.json({
-      totals: { projects: projects.length, critical, high, medium, low, avgScore },
+      totals: { projects: projects.length, critical, high, medium, low },
       topProjects,
     });
   } catch (error) {

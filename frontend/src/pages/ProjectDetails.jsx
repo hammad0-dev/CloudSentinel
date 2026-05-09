@@ -13,12 +13,6 @@ const normalize = (project, latestScanFromApi = null) => {
   if (ls === "RUNNING") status = "Scanning";
   else if (ls === "FAILED") status = "Failed";
   else if (ls === "COMPLETED") status = "Active";
-  const securityScore =
-    typeof project.securityScore === "number"
-      ? project.securityScore
-      : typeof project.security_score === "number"
-        ? project.security_score
-        : null;
   const lastScanTime =
     project.lastScanTime ||
     project.last_scan_time ||
@@ -33,7 +27,6 @@ const normalize = (project, latestScanFromApi = null) => {
     stack: project.stack || project.language || "Other",
     description: project.description || "No description provided.",
     status,
-    securityScore,
     lastScanTime,
   };
 };
@@ -151,9 +144,6 @@ export default function ProjectDetails() {
         <p><span className="text-[var(--text-secondary)]">Last scan:</span> {project.lastScanTime ? new Date(project.lastScanTime).toLocaleString() : "Not scanned yet"}</p>
         <div className="flex gap-2">
           <span className={`pill-badge ${statusStyles[project.status] || statusStyles.Pending}`}>{project.status}</span>
-          <span className="pill-badge border-[var(--border)] text-[var(--text-secondary)]">
-            Security Score: {typeof project.securityScore === "number" ? `${project.securityScore}/100` : "N/A"}
-          </span>
         </div>
       </div>
 

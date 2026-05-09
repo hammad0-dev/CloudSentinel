@@ -23,12 +23,6 @@ const normalize = (project) => {
   else if (ls === "FAILED") status = "Failed";
   else if (ls === "COMPLETED") status = "Active";
 
-  const securityScore =
-    typeof project.securityScore === "number"
-      ? project.securityScore
-      : typeof project.security_score === "number"
-        ? project.security_score
-        : null;
   const lastScanTime =
     project.lastScanTime ||
     project.last_scan_time ||
@@ -42,16 +36,8 @@ const normalize = (project) => {
     repositoryUrl: project.repositoryUrl || project.repo_url || "",
     stack: project.stack || project.language || "Auto-detected after analysis",
     status,
-    securityScore,
     lastScanTime,
   };
-};
-
-const scoreClass = (score) => {
-  if (typeof score !== "number") return "border-[var(--text-tertiary)] text-[var(--text-tertiary)]";
-  if (score >= 90) return "border-[var(--accent-green)] text-[var(--accent-green)]";
-  if (score >= 70) return "border-[var(--accent-yellow)] text-[var(--accent-yellow)]";
-  return "border-[var(--accent-red)] text-[var(--accent-red)]";
 };
 
 export default function ProjectsPage() {
@@ -184,12 +170,11 @@ export default function ProjectsPage() {
             const project = normalize(raw);
             return (
               <div key={project.id} className="card p-5">
-                <div className="grid md:grid-cols-7 gap-4 items-center">
+                <div className="grid md:grid-cols-6 gap-4 items-center">
                   <div className="md:col-span-2"><p className="font-semibold">{project.projectName}</p><a href={project.repositoryUrl} target="_blank" rel="noreferrer" className="text-sm text-[var(--accent-green)] inline-flex items-center gap-1 hover:underline break-all"><Github size={14} />{project.repositoryUrl}<ExternalLink size={12} /></a></div>
                   <div className="text-sm text-[var(--text-secondary)]">{project.stack}</div>
                   <div><span className={`pill-badge ${statusStyles[project.status] || statusStyles.Pending}`}>{project.status}</span></div>
                   <div className="text-sm text-[var(--text-secondary)]">{project.lastScanTime ? new Date(project.lastScanTime).toLocaleString() : "Not scanned yet"}</div>
-                  <div><span className={`pill-badge ${scoreClass(project.securityScore)}`}>{typeof project.securityScore === "number" ? `${project.securityScore}/100` : "N/A"}</span></div>
                   <div className="flex flex-wrap gap-2">
                     <button className="primary-btn text-sm" onClick={() => scanProject(project)}><ScanSearch size={14} className="inline mr-1" />Scan</button>
                     <Link className="secondary-btn text-sm" to={`/projects/${project.id}`}>View</Link>
@@ -209,9 +194,6 @@ export default function ProjectsPage() {
             <h3 className="text-xl font-semibold">Register Project</h3>
             <div><label className="text-sm text-[var(--text-secondary)]">Project Name</label><input className={`input w-full mt-1 ${errors.projectName ? "border-[var(--accent-red)]" : ""}`} value={form.projectName} onChange={(e) => setForm((prev) => ({ ...prev, projectName: e.target.value }))} />{errors.projectName ? <p className="text-xs text-[var(--accent-red)] mt-1">{errors.projectName}</p> : null}</div>
             <div><label className="text-sm text-[var(--text-secondary)]">GitHub Repository URL</label><input className={`input w-full mt-1 ${errors.repositoryUrl ? "border-[var(--accent-red)]" : ""}`} placeholder="https://github.com/owner/repository" value={form.repositoryUrl} onChange={(e) => setForm((prev) => ({ ...prev, repositoryUrl: e.target.value }))} />{errors.repositoryUrl ? <p className="text-xs text-[var(--accent-red)] mt-1">{errors.repositoryUrl}</p> : null}</div>
-            <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] p-3 text-sm text-[var(--text-secondary)]">
-              Stack / Language is auto-detected from your repository by CloudSentinel.
-            </div>
             <div>
               <label className="text-sm text-[var(--text-secondary)]">GitHub Personal Access Token (optional)</label>
               <input
